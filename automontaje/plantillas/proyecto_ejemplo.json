@@ -1,0 +1,74 @@
+{
+  "titulo": "El Poder del Silencio",
+  "idioma": "es",
+  "estilo": "documental reflexivo",
+  "resolucion": "1920x1080",
+  "fps": 30,
+
+  "narrador": {
+    "motor": "edge-tts",
+    "voz": "es-ES-AlvaroNeural",
+    "velocidad": "-5%",
+    "volumen": "+0%"
+  },
+
+  "musica": {
+    "fuente": "archivo",
+    "archivo": "musica/ambient_piano.mp3",
+    "prompt_generacion": "ambient piano, slow 65 BPM, cinematic, no vocals",
+    "volumen_base": 0.30,
+    "volumen_durante_voz": 0.08,
+    "fade_in_segundos": 3.0,
+    "fade_out_segundos": 5.0
+  },
+
+  "transiciones": {
+    "tipo_default": "crossfade",
+    "duracion_default_segundos": 1.5
+  },
+
+  "subtitulos": {
+    "generar": true,
+    "fuente": "Arial",
+    "tamano": 24,
+    "color": "white",
+    "borde": "black",
+    "posicion": "bottom"
+  },
+
+  "escenas": [
+    {
+      "id": "escena_intro_01",
+      "clip": "clips/escena_intro_01.mp4",
+      "clip_inicio_seg": 0,
+      "clip_fin_seg": null,
+      "texto_narracion": "En un mundo lleno de ruido... a veces lo más valiente... es quedarse en silencio.",
+      "pausa_antes_seg": 2.0,
+      "pausa_despues_seg": 1.5,
+      "transicion_entrada": "fade_from_black",
+      "transicion_salida": "crossfade"
+    },
+    {
+      "id": "escena_desarrollo_02",
+      "clip": "clips/escena_desarrollo_02.mp4",
+      "clip_inicio_seg": 5,
+      "clip_fin_seg": 18,
+      "texto_narracion": "Nos han enseñado que hablar es poder. Pero nadie nos enseñó que escuchar... es sabiduría.",
+      "pausa_antes_seg": 1.0,
+      "pausa_despues_seg": 2.0,
+      "transicion_entrada": "crossfade",
+      "transicion_salida": "crossfade"
+    },
+    {
+      "id": "escena_cierre_03",
+      "clip": "clips/escena_cierre_03.mp4",
+      "clip_inicio_seg": 0,
+      "clip_fin_seg": null,
+      "texto_narracion": "El silencio no es vacío. Es espacio. Espacio para pensar, para sentir, para ser.",
+      "pausa_antes_seg": 1.0,
+      "pausa_despues_seg": 3.0,
+      "transicion_entrada": "crossfade",
+      "transicion_salida": "fade_to_black"
+    }
+  ]
+}

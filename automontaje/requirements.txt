@@ -1,0 +1,15 @@
+# ═══════════════════════════════════════════════════════════
+# AEGS — Sistema de Automontaje de Vídeo
+# Dependencias Python
+# ═══════════════════════════════════════════════════════════
+# Instalar: pip install -r requirements.txt
+# Requisito externo: FFmpeg y ffprobe deben estar en el PATH del sistema.
+
+edge-tts>=6.1.0
+pydub>=0.25.1
+audioop-lts>=0.2.1        # Requerido por pydub en Python 3.13+
+openai-whisper>=20231117
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
