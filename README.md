@@ -152,6 +152,22 @@ Whisper transcribe la pista **limpia** de voz (sin música) por escena, y los ti
 
 ---
 
+## 📚 Documentación completa
+
+| Documento | Contenido |
+|-----------|-----------|
+| [ROADMAP.md](automontaje/doc/ROADMAP.md) | Mejoras planificadas, fases A–I, visión N8N |
+| [CHANGELOG.md](automontaje/doc/CHANGELOG.md) | Historial de versiones y bugs resueltos |
+| [ARQUITECTURA.md](automontaje/doc/ARQUITECTURA.md) | Diseño técnico del sistema |
+| [HISTORIAL_DISENO.md](automontaje/doc/HISTORIAL_DISENO.md) | Decisiones de arquitectura del diseño inicial |
+| [CONTRATO_JSON.md](automontaje/doc/CONTRATO_JSON.md) | Especificación completa del proyecto.json |
+| [GUIA_COMPLETA.md](automontaje/doc/GUIA_COMPLETA.md) | Guía de uso para no-técnicos |
+| [INSTALACION.md](automontaje/doc/INSTALACION.md) | Setup paso a paso |
+| [API_MODULOS.md](automontaje/doc/API_MODULOS.md) | Referencia de funciones por módulo |
+| [TESTING.md](automontaje/doc/TESTING.md) | Cómo ejecutar los tests |
+
+---
+
 ## 🧪 Tests
 
 ```bash

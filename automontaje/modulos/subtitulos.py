@@ -26,7 +26,6 @@ Salidas:
 import os
 import json
 import subprocess
-import whisper
 from configuracion import (
     CARPETA_OUTPUT, ARCHIVO_TIMELINE, ARCHIVO_DURACIONES,
     ARCHIVO_VIDEO_FINAL, ARCHIVO_SRT, ARCHIVO_VIDEO_SUB,
@@ -84,6 +83,12 @@ def generar_srt_matematico(ruta_proyecto: str, datos_proyecto: dict) -> str:
     escenas_config = {e["id"]: e for e in datos_proyecto.get("escenas", [])}
 
     logger.info(f"Cargando modelo Whisper '{MODELO_WHISPER}' (puede tardar la primera vez)...")
+    try:
+        import whisper
+    except ImportError:
+        raise ImportError(
+            "Whisper no está instalado. Ejecuta: pip install openai-whisper"
+        )
     modelo = whisper.load_model(MODELO_WHISPER)
 
     lineas_srt = []
