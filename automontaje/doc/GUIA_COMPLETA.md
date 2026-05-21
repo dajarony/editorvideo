@@ -69,7 +69,7 @@ Si ves la versión, está listo. Si dice "no reconocido", necesitas reiniciar la
 Abre PowerShell y navega a la carpeta del sistema:
 
 ```powershell
-cd "C:\rutaeditorvideo\automontaje"
+cd "C:\ruta\a\editorvideo\automontaje"
 pip install -r requirements.txt
 ```
 
@@ -88,7 +88,7 @@ Esto instala:
 ### Paso 4: Verificar que Todo Funciona
 
 ```powershell
-cd "C:\rutaeditorvideo\automontaje"
+cd "C:\ruta\a\editorvideo\automontaje"
 python -m pytest tests/ -v
 ```
 
@@ -284,7 +284,7 @@ python -m edge_tts --list-voices
 ## ▶️ PARTE 5: EJECUTAR
 
 ```powershell
-cd "C:\rutaeditorvideo\automontaje"
+cd "C:\ruta\a\editorvideo\automontaje"
 python main.py "C:\ruta\a\mi_proyecto\"
 ```
 
@@ -387,7 +387,7 @@ Crea `C:\MiVideo\proyecto.json` con un editor de texto:
 ### 4. Ejecuta
 
 ```powershell
-cd "C:\rutaeditorvideo\automontaje"
+cd "C:\ruta\a\editorvideo\automontaje"
 python main.py "C:\MiVideo\"
 ```
 
