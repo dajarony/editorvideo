@@ -1,27 +1,49 @@
-# 🎬 AEGS — Automontaje de Vídeo
+# 🎬 AEGS — Editor de Vídeo Automático con IA
 
-> Sistema en Python que convierte un `proyecto.json` en un vídeo final completo con narración (Edge TTS), música con ducking, transiciones reales y subtítulos sincronizados (Whisper).
+> Sistema en Python para **mejorar, editar y montar vídeos automáticamente**.
+> Combina FFmpeg, IA local (Whisper, Demucs, Real-ESRGAN) y un sistema de
+> **contratos de herramientas seguras** controlable por lenguaje natural en español.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![FFmpeg required](https://img.shields.io/badge/requires-FFmpeg-red)](https://ffmpeg.org/)
+[![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen)](#-tests)
 
 ---
 
-## ✨ ¿Qué hace?
+## ✨ ¿Qué es?
 
-Le pasas una carpeta con un `proyecto.json` que describe escenas, clips de vídeo, textos a narrar y música → te devuelve un MP4 listo para publicar.
+AEGS tiene **dos partes** que funcionan de forma independiente:
 
-**Pipeline en 5 fases**:
+### 🅰️ Editor de vídeo (mejorar y editar cualquier vídeo)
+Coges un vídeo cualquiera y lo dejas listo para publicar: más nítido, con mejor
+color, subtítulos, formato vertical, voz limpia y efectos en los momentos que
+elijas. Se controla por **interfaz gráfica**, por **comandos en español** o por
+**contratos JSON**.
 
-```
-Validar  →  Narrar (TTS)  →  Mezclar audio  →  Montar vídeo  →  Subtitular
-  ↓             ↓                 ↓                  ↓              ↓
-proyecto.json   MP3 por        WAV maestro      MP4 con         SRT + MP4
-                escena         con ducking      transiciones    subtitulado
-```
+### 🅱️ Automontaje (proyecto.json → vídeo final)
+Le pasas una carpeta con un `proyecto.json` que describe escenas, clips, textos a
+narrar y música → te devuelve un MP4 con narración (Edge TTS), música con ducking,
+transiciones reales y subtítulos sincronizados.
 
-Cada fase es independiente, valida sus entradas, y aborta limpiamente si algo falla.
+---
+
+## 🧰 Funciones principales
+
+| Función | Descripción |
+|---|---|
+| ✂️ **Cortar silencios** | Elimina silencios largos automáticamente |
+| 🗣️ **Quitar muletillas** | Detecta y elimina *"umm, eh, este..."* (Whisper) |
+| 🎨 **Color grading** | 4 estilos: natural, neutro, cálido, cinematográfico |
+| ✨ **Mejora visual real** | Nitidez + brillo + color vivo + resolución ×2 (sin plastificar) |
+| 🤖 **Super-resolución IA** | Ampliación ×4 con Real-ESRGAN |
+| 📱 **Vertical 9:16** | Convierte a formato TikTok / Reels / Shorts |
+| 💬 **Subtítulos automáticos** | Transcribe y quema subtítulos (faster-whisper) |
+| 🎙️ **Aislar voz / quitar música** | Separación de voz con IA (Demucs) |
+| 🔊 **Audio fades** | Fundidos suaves de audio en inicio y fin |
+| ⏱️ **Efectos por momento** | Texto, imagen/logo, zoom y corte en el segundo exacto |
+| 🧠 **Editor por comandos** | Órdenes en español → contrato validado |
+| 🎬 **Automontaje** | `proyecto.json` → vídeo completo con narración y música |
 
 ---
 
@@ -29,142 +51,174 @@ Cada fase es independiente, valida sus entradas, y aborta limpiamente si algo fa
 
 ### 1. Requisitos del sistema
 
-Necesitas **FFmpeg** y **ffprobe** en el `PATH`:
+**FFmpeg** y **ffprobe** deben estar en el `PATH`:
 
-- **Windows**: [ffmpeg.org/download.html](https://ffmpeg.org/download.html) (añadir a `PATH`)
+- **Windows**: [ffmpeg.org/download.html](https://ffmpeg.org/download.html) → añadir a `PATH`
 - **macOS**: `brew install ffmpeg`
 - **Linux**: `sudo apt install ffmpeg`
 
-### 2. Dependencias Python
+### 2. Clonar e instalar dependencias
 
 ```bash
 git clone https://github.com/dajarony/editorvideo.git
-cd editorvideo/automontaje
+cd editorvideo
 python -m venv .venv
+
 # Windows
 .venv\Scripts\activate
-# Linux/macOS
+# Linux / macOS
 source .venv/bin/activate
 
-pip install -r requirements.txt
+pip install -r automontaje/requirements.txt
 ```
 
----
-
-## ⚡ Uso rápido
+### 3. Dependencias de IA (recomendadas)
 
 ```bash
-python main.py /ruta/a/mi_proyecto/
+pip install customtkinter pillow        # interfaz gráfica
+pip install edge-tts                    # narración (automontaje)
+pip install faster-whisper              # subtítulos y transcripción
+pip install demucs torch                # aislar voz / quitar música (opcional, pesado)
 ```
 
-### Flags útiles
+### 4. Real-ESRGAN — super-resolución IA (opcional)
 
-| Flag             | Qué hace                                                  |
-|------------------|-----------------------------------------------------------|
-| `--skip-subs`    | Omite la fase de subtítulos                               |
-| `--skip-tts`     | No regenera narraciones; usa las existentes               |
-| `--no-cache`     | Fuerza regenerar todas las voces (ignora la caché)        |
-| `--keep-temp`    | Conserva la carpeta de clips temporales                   |
-| `--srt-sidecar`  | Genera SRT pero **no** lo quema en el vídeo               |
-| `-v, --verbose`  | Logging detallado                                          |
+La ampliación ×4 con IA necesita el ejecutable portable de Real-ESRGAN:
+
+1. Descarga `realesrgan-ncnn-vulkan` desde
+   [github.com/xinntao/Real-ESRGAN/releases](https://github.com/xinntao/Real-ESRGAN/releases)
+2. Descomprime dentro de la carpeta `realesrgan/` en la raíz del proyecto:
+
+```
+realesrgan/
+├── realesrgan-ncnn-vulkan.exe
+└── models/
+    ├── realesrgan-x4plus.bin / .param
+    └── realesrgan-x4plus-anime.bin / .param
+```
+
+> Sin Real-ESRGAN el resto del programa funciona igual; solo se desactiva la
+> opción "Ampliar ×4 con IA".
+
+---
+
+## ⚡ Uso
+
+### Modo 1 — Interfaz gráfica (lo más cómodo)
 
 ```bash
-python main.py ./mi_video/ --skip-subs --keep-temp
+python interfaz.py
 ```
 
----
+Abre una ventana donde seleccionas un vídeo o imagen, marcas las mejoras que
+quieres y pulsas **PROCESAR**. Incluye:
 
-## 📦 Estructura de un proyecto
+- Casillas para cada mejora (silencios, color, subtítulos, vertical, voz...)
+- **Editor por comandos** — escribe lo que quieres en español
+- **Contrato de herramientas** — caja JSON con botones *Validar* / *Ejecutar*
+
+### Modo 2 — Editor por comandos
+
+Escribe órdenes en español y el sistema las traduce a ajustes seguros:
 
 ```
-mi_proyecto/
-├── proyecto.json            ← receta del vídeo
-├── clips/
-│   ├── escena_intro.mp4
-│   └── escena_cierre.mp4
-├── musica/
-│   └── ambient.mp3
-└── output/                  ← se genera al ejecutar
-    ├── narracion/           ← MP3s por escena
-    ├── narracion_cache.json ← caché TTS por hash
-    ├── audio_mezclado.wav
-    ├── timeline.json
-    ├── video_final.mp4
-    ├── subtitulos.srt
-    └── video_final_subtitulado.mp4
+mejora calidad media, quita silencios y hazlo vertical para reels
+```
+```
+en el segundo 12 pon texto "Idea clave" durante 3 segundos
+en 00:18 zoom suave durante 2 segundos
+corta de 7 a 9
 ```
 
-Mira [`automontaje/plantillas/proyecto_ejemplo.json`](automontaje/plantillas/proyecto_ejemplo.json) para una plantilla completa.
+### Modo 3 — Contrato de herramientas (JSON)
 
----
-
-## 🎚️ Transiciones disponibles
-
-| Transición          | Efecto                                                   |
-|---------------------|----------------------------------------------------------|
-| `cut`               | Corte seco                                               |
-| `fade_from_black`   | Fundido desde negro al inicio del clip                   |
-| `fade_to_black`     | Fundido a negro al final del clip                        |
-| `dip_to_black`      | Pequeño fade out + fade in en bordes (sin solapar)       |
-| `crossfade`         | **xfade real** entre clips adyacentes (filter_complex)   |
-
-> El sistema detecta automáticamente si tienes `crossfade` y cambia a un grafo `filter_complex` con `xfade` real, en vez del concat-demuxer rápido.
-
----
-
-## 🧠 Caché TTS
-
-Cada narración se identifica por `SHA-1(texto + voz + velocidad)`. Si vuelves a renderizar el mismo proyecto sin tocar texto/voz, **no se regenera ningún MP3** → ahorras tiempo y peticiones a Edge TTS.
-
-Para forzar regeneración: `--no-cache`.
-
----
-
-## 🎙️ Música con ducking
-
-La música se baja automáticamente cuando el narrador habla, con fades suavizados de 200 ms en los bordes. No hay cortes bruscos de volumen.
+La IA (o tú) describe la edición como un contrato; el sistema lo **valida** y
+lo **ejecuta paso a paso de forma segura**:
 
 ```json
-"musica": {
-  "fuente": "archivo",
-  "archivo": "musica/ambient.mp3",
-  "volumen_base": 0.30,
-  "volumen_durante_voz": 0.08,
-  "fade_in_segundos": 3.0,
-  "fade_out_segundos": 5.0
+{
+  "herramientas": [
+    {"herramienta": "mejora_real", "parametros": {"nivel": "media"}},
+    {"herramienta": "texto", "parametros": {"texto": "Mira esto", "inicio": 12, "duracion": 3}},
+    {"herramienta": "zoom", "parametros": {"inicio": 20, "duracion": 2, "intensidad": "suave"}},
+    {"herramienta": "vertical_9_16", "parametros": {}},
+    {"herramienta": "subtitulos", "parametros": {"idioma": "es"}}
+  ]
 }
 ```
 
----
+### Modo 4 — Mejorar un vídeo por CLI
 
-## 📝 Subtítulos sincronizados
-
-Whisper transcribe la pista **limpia** de voz (sin música) por escena, y los timestamps se desplazan al offset matemático del timeline. Resultado: subtítulos que cuadran al milisegundo con el vídeo final.
-
-```json
-"subtitulos": {
-  "generar": true,
-  "fuente": "Arial",
-  "tamano": 24,
-  "sidecar": false   // si true → solo SRT, no quema
-}
+```bash
+python mejorar_video.py "mi_video.mp4" --estilo natural_claro
+python mejorar_video.py "mi_video.mp4" --comando "hazlo vertical, mejora fuerte y ponle subtitulos"
 ```
 
+### Modo 5 — Automontaje (proyecto.json → vídeo)
+
+```bash
+python automontaje/main.py /ruta/a/mi_proyecto/
+```
+
+| Flag | Qué hace |
+|---|---|
+| `--skip-subs` | Omite la fase de subtítulos |
+| `--skip-tts` | No regenera narraciones; usa las existentes |
+| `--no-cache` | Fuerza regenerar todas las voces |
+| `--keep-temp` | Conserva los clips temporales |
+| `--srt-sidecar` | Genera SRT pero no lo quema en el vídeo |
+| `-v, --verbose` | Logging detallado |
+
 ---
 
-## 📚 Documentación completa
+## 🛠️ Herramientas del sistema de contratos
 
-| Documento | Contenido |
-|-----------|-----------|
-| [ROADMAP.md](automontaje/doc/ROADMAP.md) | Mejoras planificadas, fases A–I, visión N8N |
-| [CHANGELOG.md](automontaje/doc/CHANGELOG.md) | Historial de versiones y bugs resueltos |
-| [ARQUITECTURA.md](automontaje/doc/ARQUITECTURA.md) | Diseño técnico del sistema |
-| [HISTORIAL_DISENO.md](automontaje/doc/HISTORIAL_DISENO.md) | Decisiones de arquitectura del diseño inicial |
-| [CONTRATO_JSON.md](automontaje/doc/CONTRATO_JSON.md) | Especificación completa del proyecto.json |
-| [GUIA_COMPLETA.md](automontaje/doc/GUIA_COMPLETA.md) | Guía de uso para no-técnicos |
-| [INSTALACION.md](automontaje/doc/INSTALACION.md) | Setup paso a paso |
-| [API_MODULOS.md](automontaje/doc/API_MODULOS.md) | Referencia de funciones por módulo |
-| [TESTING.md](automontaje/doc/TESTING.md) | Cómo ejecutar los tests |
+El núcleo seguro registra **11 herramientas**. Cada una valida sus parámetros
+antes de tocar el vídeo:
+
+| Herramienta | Acción | Parámetros principales |
+|---|---|---|
+| `cortar_silencios` | Quita silencios largos | `umbral_db`, `duracion_min` |
+| `color_grading` | Color grading protegido | `estilo` |
+| `mejora_real` | Nitidez + color + ×2 | `nivel` |
+| `vertical_9_16` | Formato vertical | — |
+| `subtitulos` | Subtítulos automáticos | `idioma`, `modelo` |
+| `limpiar_voz` | Aísla voz / quita música | `nivel` |
+| `fades_audio` | Fades de audio | `duracion_ms` |
+| `corte` | Quita un tramo del vídeo | `inicio`, `fin` |
+| `texto` | Texto en pantalla | `texto`, `inicio`, `duracion`, `posicion` |
+| `imagen` | Logo/imagen superpuesta | `archivo`, `inicio`, `duracion`, `posicion` |
+| `zoom` | Zoom suave (punch-in) | `inicio`, `duracion`, `intensidad` |
+
+**Filosofía de seguridad:** la IA nunca ejecuta FFmpeg en crudo. Solo puede pedir
+herramientas registradas; un **validador maestro** revisa el contrato y, si algo
+está mal, lo rechaza con un error claro **sin tocar el vídeo**.
+
+---
+
+## 📂 Estructura del proyecto
+
+```
+editorvideo/
+├── interfaz.py                 ← interfaz gráfica (editor de vídeo)
+├── mejorar_video.py            ← CLI para mejorar un vídeo
+├── superresolucion_video.py    ← CLI de super-resolución Real-ESRGAN
+├── automontaje/
+│   ├── main.py                 ← pipeline proyecto.json → vídeo
+│   ├── modulos/
+│   │   ├── mejoras.py          ← mejoras de vídeo (silencios, color, voz...)
+│   │   ├── efectos.py          ← efectos por momento (corte, texto, zoom...)
+│   │   ├── contrato_edicion.py ← registro de herramientas + validador + ejecutor
+│   │   ├── editor_comandos.py  ← comandos en español → contrato
+│   │   ├── subtitulos.py       ← transcripción y subtítulos
+│   │   ├── narracion.py        ← narración con Edge TTS
+│   │   ├── mezclador_audio.py  ← mezcla de audio con ducking
+│   │   ├── montador_video.py   ← montaje y transiciones
+│   │   └── validador.py        ← validación de proyectos
+│   ├── tests/                  ← suite de tests (pytest)
+│   └── doc/                    ← documentación técnica completa
+└── realesrgan/                 ← Real-ESRGAN (descarga aparte)
+```
 
 ---
 
@@ -172,20 +226,55 @@ Whisper transcribe la pista **limpia** de voz (sin música) por escena, y los ti
 
 ```bash
 cd automontaje
-pip install -r requirements.txt   # incluye pytest
-pytest -v
+pytest -q
+```
+
+```
+88 passed
 ```
 
 ---
 
-## 🛠️ Roadmap
+## 📚 Documentación
 
-- [ ] Soporte de imágenes estáticas como "clip"
-- [ ] Progreso de FFmpeg en consola (parsing %)
+| Documento | Contenido |
+|---|---|
+| [ARQUITECTURA.md](automontaje/doc/ARQUITECTURA.md) | Diseño técnico del sistema |
+| [ESTANDAR_EDICION.md](automontaje/doc/ESTANDAR_EDICION.md) | Estándar de edición y herramientas |
+| [CONTRATO_JSON.md](automontaje/doc/CONTRATO_JSON.md) | Especificación del proyecto.json |
+| [GUIA_COMPLETA.md](automontaje/doc/GUIA_COMPLETA.md) | Guía de uso para no-técnicos |
+| [INSTALACION.md](automontaje/doc/INSTALACION.md) | Setup paso a paso |
+| [API_MODULOS.md](automontaje/doc/API_MODULOS.md) | Referencia de funciones por módulo |
+| [CHANGELOG.md](automontaje/doc/CHANGELOG.md) | Historial de versiones |
+| [ROADMAP.md](automontaje/doc/ROADMAP.md) | Mejoras planificadas |
+| [TESTING.md](automontaje/doc/TESTING.md) | Cómo ejecutar los tests |
+
+---
+
+## 🗺️ Roadmap
+
+- [x] Mejora visual real sin plastificar
+- [x] Subtítulos automáticos (faster-whisper)
+- [x] Aislar voz / quitar música (Demucs)
+- [x] Sistema de contratos de herramientas seguras
+- [x] Efectos por momento (corte, texto, imagen, zoom)
+- [x] Editor por comandos en español
+- [ ] Presets de 1 clic (Reels / YouTube / Podcast)
+- [ ] Preview antes/después
+- [ ] Cola de procesamiento por lotes
+- [ ] IA que sugiere contratos desde la transcripción
 - [ ] CI con GitHub Actions
-- [ ] Descarga automática de FFmpeg si no está
-- [ ] Soporte de B-roll superpuesto
-- [ ] Plantilla CLI interactiva (`aegs init`)
+
+---
+
+## ⚠️ Notas honestas
+
+- Un vídeo de **baja resolución** tiene un límite: los filtros limpian y mejoran,
+  pero no inventan detalle que no existe.
+- La **super-resolución IA** y la **separación de voz** son lentas en vídeos largos
+  (procesan con IA fotograma a fotograma / por análisis).
+- Los **subtítulos automáticos** dependen de que la voz se oiga clara. Con mucho
+  ruido de fondo, ninguna IA transcribe bien.
 
 ---
 
@@ -198,6 +287,7 @@ pytest -v
 ## 🤝 Contribuir
 
 PRs bienvenidos. Por favor:
-1. Mantén el patrón de SUME DOCBLOCK al cabecera de cada módulo.
-2. Añade tests para nueva lógica.
-3. Sigue la convención de mensajes: `tipo: descripción corta` (`fix:`, `feat:`, `docs:`, etc.).
+
+1. Mantén la cabecera **SUME DOCBLOCK** en cada módulo.
+2. Añade tests para la lógica nueva.
+3. Sigue la convención de commits: `tipo: descripción` (`feat:`, `fix:`, `docs:`...).
