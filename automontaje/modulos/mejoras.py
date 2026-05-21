@@ -205,6 +205,75 @@ def anadir_audio_fades(
     return ruta_salida
 
 
+# ─── Mejora real (FFmpeg, sin IA) ───────────────────────
+
+NIVELES_MEJORA = {
+    "suave": (
+        "hqdn3d=2:2:3:3,"                    # reduccion ruido suave
+        "unsharp=3:3:0.8:3:3:0,"             # nitidez moderada
+        "eq=saturation=1.1:contrast=1.05"    # color ligero
+    ),
+    "media": (
+        "hqdn3d=3:3:6:6,"                    # reduccion ruido media
+        "unsharp=5:5:1.2:5:5:0,"             # nitidez real
+        "eq=saturation=1.15:contrast=1.10:brightness=0.02"
+    ),
+    "fuerte": (
+        "hqdn3d=4:4:8:8,"                    # reduccion ruido fuerte
+        "unsharp=7:7:1.8:7:7:0,"             # maxima nitidez
+        "eq=saturation=1.2:contrast=1.15:brightness=0.03,"
+        "curves=r='0/0 0.5/0.53 1/1':"
+        "g='0/0 0.5/0.51 1/1':"
+        "b='0/0 0.5/0.49 1/0.97'"           # tono ligeramente calido
+    ),
+}
+
+
+def mejorar_imagen_real(
+    ruta_entrada: str,
+    ruta_salida: str,
+    nivel: str = "media"
+) -> str:
+    """Mejora una imagen o video con FFmpeg puro, sin IA.
+
+    Aplica: reduccion de ruido, nitidez real y correccion de color.
+    NO plastifica ni suaviza como Real-ESRGAN — resultado natural.
+
+    Args:
+        ruta_entrada: Ruta al archivo original.
+        ruta_salida:  Ruta de salida.
+        nivel:        'suave' | 'media' | 'fuerte'
+
+    Returns:
+        Ruta al archivo mejorado.
+    """
+    filtro = NIVELES_MEJORA.get(nivel, NIVELES_MEJORA["media"])
+    ext    = os.path.splitext(ruta_entrada)[1].lower()
+    es_imagen = ext in (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+    logger.info(f"  🔧 Mejora real FFmpeg nivel='{nivel}' ({'imagen' if es_imagen else 'video'})...")
+
+    if es_imagen:
+        cmd = [
+            "ffmpeg", "-y", "-i", ruta_entrada,
+            "-vf", filtro,
+            "-q:v", "2",        # maxima calidad JPEG
+            ruta_salida
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y", "-i", ruta_entrada,
+            "-vf", filtro,
+            "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+            "-c:a", "copy",
+            ruta_salida
+        ]
+
+    _run_ffmpeg(cmd, "mejorar_imagen_real")
+    logger.info(f"  ✅ Mejora real aplicada → {os.path.basename(ruta_salida)}")
+    return ruta_salida
+
+
 # ─── Orquestador principal ───────────────────────────────
 
 def aplicar_todas_mejoras(

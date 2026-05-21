@@ -119,21 +119,48 @@ class App(ctk.CTk):
         )
         self.estilo_color.pack(side="left")
 
-        # Columna derecha — Super resolución IA
+        # Columna derecha — Mejoras de imagen
         col_der = ctk.CTkFrame(frame_opciones, fg_color="transparent")
         col_der.grid(row=1, column=2, columnspan=2, padx=20, pady=(0, 12), sticky="nw")
 
-        ctk.CTkLabel(col_der, text="Super resolucion con IA (Real-ESRGAN)",
+        # ── Mejora real (FFmpeg) ──────────────────────
+        ctk.CTkLabel(col_der, text="Mejora real (FFmpeg) — para fotos/videos reales",
                      font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color="#4EA8DE").pack(anchor="w", pady=(0, 6))
+                     text_color="#4ade80").pack(anchor="w", pady=(0, 4))
+
+        self.var_mejora_real = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(col_der,
+                        text="Nitidez + reduccion de ruido + color natural\n(rapido, sin plastificar, resultado real)",
+                        variable=self.var_mejora_real).pack(anchor="w", pady=3)
+
+        frame_nivel = ctk.CTkFrame(col_der, fg_color="transparent")
+        frame_nivel.pack(anchor="w", pady=(4, 0))
+        ctk.CTkLabel(frame_nivel, text="Nivel:").pack(side="left", padx=(0, 8))
+        self.nivel_mejora = ctk.CTkOptionMenu(
+            frame_nivel,
+            values=["suave", "media", "fuerte"],
+            width=110
+        )
+        self.nivel_mejora.set("media")
+        self.nivel_mejora.pack(side="left")
+
+        ctk.CTkLabel(col_der,
+                     text="suave  = toque ligero\nmedia  = equilibrado (recomendado)\nfuerte = maxima mejora",
+                     font=ctk.CTkFont(size=11), text_color="gray",
+                     justify="left").pack(anchor="w", pady=(4, 10))
+
+        # ── Super resolución IA (ESRGAN) ──────────────
+        ctk.CTkLabel(col_der, text="Super resolucion IA (Real-ESRGAN) — para ampliar",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color="#4EA8DE").pack(anchor="w", pady=(4, 4))
 
         self.var_esrgan = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(col_der, text="Mejorar calidad con IA (x4)\n(lento pero brutal resultado)",
+        ctk.CTkCheckBox(col_der, text="Ampliar x4 con IA (lento)\nBueno para imagenes pequenas o dibujos",
                         variable=self.var_esrgan,
                         onvalue=True, offvalue=False).pack(anchor="w", pady=3)
 
         frame_modelo = ctk.CTkFrame(col_der, fg_color="transparent")
-        frame_modelo.pack(anchor="w", pady=(10, 0))
+        frame_modelo.pack(anchor="w", pady=(6, 0))
         ctk.CTkLabel(frame_modelo, text="Modelo:").pack(side="left", padx=(0, 8))
         self.modelo_esrgan = ctk.CTkOptionMenu(
             frame_modelo,
@@ -141,13 +168,6 @@ class App(ctk.CTk):
             width=200
         )
         self.modelo_esrgan.pack(side="left")
-
-        ctk.CTkLabel(col_der,
-                     text="realesrgan-x4plus      = fotos reales\n"
-                          "realesrgan-x4plus-anime = dibujos/anime\n"
-                          "realesrnet-x4plus       = mas rapido",
-                     font=ctk.CTkFont(size=11), text_color="gray",
-                     justify="left").pack(anchor="w", pady=(8, 0))
 
         # ── Barra de progreso y estado ───────────────────
         frame_progreso = ctk.CTkFrame(self, corner_radius=12)
@@ -229,6 +249,8 @@ class App(ctk.CTk):
             "estilo_color":       self.estilo_color.get(),
             "audio_fades":        self.var_fades.get(),
             "eliminar_muletillas":self.var_muletillas.get(),
+            "mejora_real":        self.var_mejora_real.get(),
+            "nivel_mejora":       self.nivel_mejora.get(),
             "esrgan":             self.var_esrgan.get(),
             "modelo_esrgan":      self.modelo_esrgan.get(),
         }
@@ -254,6 +276,7 @@ class App(ctk.CTk):
                 config["tipo"] == "video" and config["eliminar_muletillas"],
                 config["color_grading"],
                 config["tipo"] == "video" and config["audio_fades"],
+                config["mejora_real"],
                 config["esrgan"],
             ])
             if pasos_total == 0:
@@ -304,6 +327,16 @@ class App(ctk.CTk):
                 out = tmp("fad")
                 from automontaje.modulos.mejoras import anadir_audio_fades
                 anadir_audio_fades(archivo_actual, out)
+                archivo_actual = out
+                paso_actual += 1
+
+            # ── Mejora real (FFmpeg) ──────────────────
+            if config["mejora_real"]:
+                self._estado("Aplicando mejora real (nitidez + ruido + color)...",
+                             paso_actual / pasos_total)
+                out = tmp("real")
+                from automontaje.modulos.mejoras import mejorar_imagen_real
+                mejorar_imagen_real(archivo_actual, out, nivel=config["nivel_mejora"])
                 archivo_actual = out
                 paso_actual += 1
 
