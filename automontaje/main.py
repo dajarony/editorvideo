@@ -36,7 +36,7 @@ from modulos.subtitulos import procesar_subtitulos
 from configuracion import CARPETA_LOGS, ARCHIVO_LOG, CARPETA_NARRACION, CARPETA_TEMP
 
 
-def parse_args():
+def parse_args(argv=None):
     """Define la CLI del sistema AEGS."""
     parser = argparse.ArgumentParser(
         prog="aegs",
@@ -81,7 +81,7 @@ def parse_args():
         "-v", "--verbose", action="store_true",
         help="Logging detallado en consola."
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def mostrar_resumen(ruta_video, timeline, warnings, tiempo_total, srt=None):
@@ -216,13 +216,13 @@ async def orquestador(ruta_proyecto: str, args):
     )
 
 
-if __name__ == "__main__":
-    args = parse_args()
-
+def main_cli(argv=None):
+    """Punto de entrada instalable para el comando `aegs`."""
+    args = parse_args(argv)
     ruta_input = os.path.abspath(args.ruta_proyecto)
     if not os.path.isdir(ruta_input):
         logger.error(f"El directorio especificado no existe: {ruta_input}")
-        sys.exit(1)
+        return 1
 
     if args.verbose:
         import logging
@@ -236,9 +236,14 @@ if __name__ == "__main__":
         asyncio.run(orquestador(ruta_input, args))
     except KeyboardInterrupt:
         logger.warning("\nProceso abortado por el usuario (Ctrl+C).")
-        sys.exit(130)
+        return 130
     except SystemExit:
         raise
     except Exception as e:
         logger.critical(f"Error fatal no capturado: {e}")
-        sys.exit(1)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main_cli())

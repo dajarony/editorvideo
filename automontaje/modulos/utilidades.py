@@ -25,6 +25,13 @@ import os
 import logging
 import shutil
 import hashlib
+import re
+
+
+ID_ESCENA_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+RESOLUCION_RE = re.compile(r"^([1-9][0-9]{1,4})x([1-9][0-9]{1,4})$")
+VELOCIDAD_TTS_RE = re.compile(r"^[+-](?:[0-9]|[1-9][0-9]|100)%$")
+FUENTE_SUBTITULOS_RE = re.compile(r"^[A-Za-z0-9 _-]{1,64}$")
 
 # ─── Logger Global ──────────────────────────────────────
 
@@ -52,6 +59,60 @@ def configurar_logger() -> logging.Logger:
 
 
 logger = configurar_logger()
+
+
+def ruta_segura_proyecto(ruta_proyecto: str, ruta_relativa: str) -> str:
+    """Resuelve una ruta de proyecto y evita escapes fuera de la carpeta base."""
+    if not isinstance(ruta_relativa, str) or not ruta_relativa.strip():
+        raise ValueError("Ruta vacia o invalida.")
+    if os.path.isabs(ruta_relativa):
+        raise ValueError(f"Las rutas absolutas no estan permitidas: {ruta_relativa}")
+
+    base = os.path.abspath(ruta_proyecto)
+    candidata = os.path.abspath(os.path.join(base, ruta_relativa))
+    try:
+        comun = os.path.commonpath([base, candidata])
+    except ValueError:
+        comun = ""
+    if comun != base:
+        raise ValueError(f"La ruta sale de la carpeta del proyecto: {ruta_relativa}")
+    return candidata
+
+
+def validar_id_escena(valor: str) -> bool:
+    """True si el ID es seguro para usarlo como clave y nombre de archivo."""
+    return isinstance(valor, str) and bool(ID_ESCENA_RE.fullmatch(valor))
+
+
+def validar_resolucion(valor: str) -> bool:
+    """Valida resoluciones tipo 1920x1080 con limites razonables."""
+    if not isinstance(valor, str):
+        return False
+    match = RESOLUCION_RE.fullmatch(valor)
+    if not match:
+        return False
+    ancho, alto = (int(match.group(1)), int(match.group(2)))
+    return 16 <= ancho <= 7680 and 16 <= alto <= 4320
+
+
+def normalizar_fps(valor) -> int:
+    """Devuelve un FPS entero seguro o lanza ValueError."""
+    if isinstance(valor, bool):
+        raise ValueError("fps debe ser numerico.")
+    fps = int(valor)
+    if fps < 1 or fps > 120:
+        raise ValueError("fps debe estar entre 1 y 120.")
+    return fps
+
+
+def validar_velocidad_tts(valor: str) -> bool:
+    """Valida rates de Edge TTS como +0%, -5% o +20%."""
+    return isinstance(valor, str) and bool(VELOCIDAD_TTS_RE.fullmatch(valor))
+
+
+def validar_fuente_subtitulos(valor: str) -> bool:
+    """Valida nombres simples de fuente para force_style de FFmpeg."""
+    return isinstance(valor, str) and bool(FUENTE_SUBTITULOS_RE.fullmatch(valor))
 
 
 def activar_log_archivo(ruta_proyecto: str, carpeta_logs: str, archivo_log: str):

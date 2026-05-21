@@ -62,3 +62,16 @@ proceso.log
 # Borradores de diseño en raíz (notas privadas, no van al repo)
 \#*.txt
 vamos*.txt
+
+# ─── Claude Code (datos de sesion, no van al repo) ───
+.claude/
+
+# ─── Binarios grandes (se descargan aparte) ──────────
+realesrgan/
+*.zip
+
+# ─── Proyectos y datos de usuario (no versionados) ───
+proyecto_ciber/
+proyecto_pliegue/
+test_proyecto/
+video de ciber seguridad/

@@ -36,7 +36,7 @@ FADE_DUCK_MS = 200
 # ─── Constantes de Transiciones ─────────────────────────
 # Duración del fade visual (en segundos) para transiciones
 # de tipo fade_from_black, fade_to_black y dip-to-black (crossfade).
-FADE_TRANSICION_SEG = 1.0
+FADE_TRANSICION_SEG = 0.7
 
 # ─── Voces Edge TTS Validadas ───────────────────────────
 # Lista no exhaustiva. Edge TTS tiene +400 voces.

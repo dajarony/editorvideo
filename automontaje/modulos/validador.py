@@ -23,8 +23,23 @@ Salidas:
 
 import os
 import json
-from .utilidades import obtener_info_media, logger
-from configuracion import ARCHIVO_PROYECTO, VOCES_EDGE_CONOCIDAS
+from .utilidades import (
+    obtener_info_media, logger, ruta_segura_proyecto, validar_id_escena,
+    validar_resolucion, normalizar_fps, validar_velocidad_tts,
+    validar_fuente_subtitulos
+)
+from configuracion import (
+    ARCHIVO_PROYECTO, VOCES_EDGE_CONOCIDAS, RESOLUCION_DEFAULT, FPS_DEFAULT
+)
+
+
+TRANSICIONES_VALIDAS = {
+    "cut", "fade_from_black", "fade_to_black", "dip_to_black", "crossfade"
+}
+
+
+def _es_numero(valor) -> bool:
+    return isinstance(valor, (int, float)) and not isinstance(valor, bool)
 
 
 def inicializar_validador(ruta_proyecto: str) -> dict:
@@ -75,6 +90,17 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
         if campo not in datos:
             errores.append(f"Falta campo obligatorio: '{campo}'")
 
+    resolucion = datos.get("resolucion", RESOLUCION_DEFAULT)
+    if not validar_resolucion(resolucion):
+        errores.append(
+            "El campo 'resolucion' debe tener formato seguro como '1920x1080'."
+        )
+
+    try:
+        normalizar_fps(datos.get("fps", FPS_DEFAULT))
+    except (TypeError, ValueError) as e:
+        errores.append(f"El campo 'fps' es invalido: {e}")
+
     # ─── Validación del Narrador ────────────────────────
     if "narrador" in datos:
         narrador = datos["narrador"]
@@ -94,6 +120,10 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
 
             if "velocidad" not in narrador:
                 warnings.append("No se definió 'velocidad' para el narrador. Se usará +0%.")
+            elif not validar_velocidad_tts(narrador["velocidad"]):
+                errores.append(
+                    "El campo 'narrador.velocidad' debe tener formato '+0%', '-5%', etc."
+                )
 
     # ─── Validación de Escenas ──────────────────────────
     escenas = datos.get("escenas", [])
@@ -107,12 +137,32 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
 
     ids_escenas = set()
     for indice, escena in enumerate(escenas):
-        id_escena = escena.get("id", f"escena_sin_id_{indice}")
+        if not isinstance(escena, dict):
+            errores.append(f"La escena #{indice + 1} debe ser un objeto JSON.")
+            continue
+
+        id_escena = escena.get("id")
+        if not validar_id_escena(id_escena):
+            errores.append(
+                f"Escena #{indice + 1}: 'id' obligatorio y solo puede usar letras, "
+                "numeros, guion y guion bajo."
+            )
+            id_escena = f"escena_invalida_{indice}"
 
         # IDs duplicados
         if id_escena in ids_escenas:
             errores.append(f"ID de escena duplicado: '{id_escena}'")
         ids_escenas.add(id_escena)
+
+        for campo_trans in ("transicion_entrada", "transicion_salida"):
+            transicion = escena.get(campo_trans, "cut")
+            if (
+                not isinstance(transicion, str)
+                or transicion.strip().lower() not in TRANSICIONES_VALIDAS
+            ):
+                errores.append(
+                    f"Escena '{id_escena}': '{campo_trans}' no es una transicion valida."
+                )
 
         # Texto de narración
         texto = escena.get("texto_narracion", "")
@@ -128,11 +178,15 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
 
         # Clip de vídeo
         clip_ref = escena.get("clip", "")
-        if not clip_ref:
+        if not isinstance(clip_ref, str) or not clip_ref:
             errores.append(f"Escena '{id_escena}' no tiene clip de vídeo definido.")
             continue
 
-        ruta_clip = os.path.join(ruta_proyecto, clip_ref)
+        try:
+            ruta_clip = ruta_segura_proyecto(ruta_proyecto, clip_ref)
+        except ValueError as e:
+            errores.append(f"Escena '{id_escena}': ruta de clip invalida: {e}")
+            continue
         info_clip = obtener_info_media(ruta_clip)
 
         if "error" in info_clip:
@@ -151,6 +205,17 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
             # Lógica de tiempos clip_inicio / clip_fin
             fin_seg = escena.get("clip_fin_seg")
             inicio_seg = escena.get("clip_inicio_seg", 0)
+
+            if not _es_numero(inicio_seg):
+                errores.append(
+                    f"clip_inicio_seg en '{id_escena}' debe ser numerico."
+                )
+                continue
+            if fin_seg is not None and not _es_numero(fin_seg):
+                errores.append(
+                    f"clip_fin_seg en '{id_escena}' debe ser numerico o null."
+                )
+                continue
 
             if inicio_seg < 0:
                 errores.append(
@@ -176,18 +241,43 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
     # ─── Validación de Música ───────────────────────────
     if "musica" in datos:
         musica = datos["musica"]
-        if musica.get("fuente") == "archivo":
+        if not isinstance(musica, dict):
+            errores.append("El campo 'musica' debe ser un objeto JSON.")
+        elif musica.get("fuente") == "archivo":
             archivo_musica = musica.get("archivo", "")
-            if archivo_musica:
-                ruta_musica = os.path.join(ruta_proyecto, archivo_musica)
-                if not os.path.exists(ruta_musica):
+            if isinstance(archivo_musica, str) and archivo_musica:
+                try:
+                    ruta_musica = ruta_segura_proyecto(ruta_proyecto, archivo_musica)
+                except ValueError as e:
+                    errores.append(f"Ruta de musica invalida: {e}")
+                    ruta_musica = None
+                if ruta_musica and not os.path.exists(ruta_musica):
                     errores.append(f"Archivo de música no encontrado: {ruta_musica}")
             else:
                 errores.append("Música con fuente 'archivo' pero sin ruta definida.")
+        elif musica.get("fuente") not in (None, "ninguna"):
+            errores.append("El campo 'musica.fuente' solo admite 'archivo' o 'ninguna'.")
     else:
         warnings.append(
             "No se definió sección 'musica'. El vídeo se montará solo con narración."
         )
+
+    # ─── Validación de Subtítulos ───────────────────────
+    if "subtitulos" in datos:
+        subtitulos = datos["subtitulos"]
+        if not isinstance(subtitulos, dict):
+            errores.append("El campo 'subtitulos' debe ser un objeto JSON.")
+        else:
+            fuente = subtitulos.get("fuente", "Arial")
+            tamano = subtitulos.get("tamano", 24)
+            if not validar_fuente_subtitulos(fuente):
+                errores.append(
+                    "El campo 'subtitulos.fuente' contiene caracteres no permitidos."
+                )
+            if isinstance(tamano, bool) or not isinstance(tamano, (int, float)):
+                errores.append("El campo 'subtitulos.tamano' debe ser numerico.")
+            elif tamano < 8 or tamano > 96:
+                errores.append("El campo 'subtitulos.tamano' debe estar entre 8 y 96.")
 
     # ─── Resultado Final ────────────────────────────────
     exito = len(errores) == 0

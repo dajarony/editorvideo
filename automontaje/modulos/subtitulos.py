@@ -31,7 +31,7 @@ from configuracion import (
     ARCHIVO_VIDEO_FINAL, ARCHIVO_SRT, ARCHIVO_VIDEO_SUB,
     MODELO_WHISPER
 )
-from .utilidades import logger
+from .utilidades import logger, ruta_segura_proyecto, validar_fuente_subtitulos
 
 
 def segundos_a_srt(segundos: float) -> str:
@@ -43,10 +43,10 @@ def segundos_a_srt(segundos: float) -> str:
     Returns:
         String en formato '00:01:23,456'.
     """
-    horas = int(segundos // 3600)
-    minutos = int((segundos % 3600) // 60)
-    segs = int(segundos % 60)
-    milisegs = int(round((segundos - int(segundos)) * 1000))
+    total_ms = max(0, int(round(segundos * 1000)))
+    horas, resto = divmod(total_ms, 3_600_000)
+    minutos, resto = divmod(resto, 60_000)
+    segs, milisegs = divmod(resto, 1000)
     return f"{horas:02d}:{minutos:02d}:{segs:02d},{milisegs:03d}"
 
 
@@ -100,7 +100,9 @@ def generar_srt_matematico(ruta_proyecto: str, datos_proyecto: dict) -> str:
         if id_escena not in duraciones:
             continue
 
-        archivo_mp3 = os.path.join(ruta_proyecto, duraciones[id_escena]["archivo"])
+        archivo_mp3 = ruta_segura_proyecto(
+            ruta_proyecto, duraciones[id_escena]["archivo"]
+        )
         pausa_antes = float(escenas_config[id_escena].get("pausa_antes_seg", 0))
 
         # Offset global = momento exacto donde la voz empieza en el vídeo final
@@ -165,6 +167,13 @@ def incrustar_subtitulos(
 
     fuente = config_subs.get("fuente", "Arial")
     tamano = config_subs.get("tamano", 24)
+    if not validar_fuente_subtitulos(fuente):
+        raise ValueError("Fuente de subtitulos invalida.")
+    if isinstance(tamano, bool) or not isinstance(tamano, (int, float)):
+        raise ValueError("Tamano de subtitulos invalido.")
+    tamano = int(tamano)
+    if tamano < 8 or tamano > 96:
+        raise ValueError("Tamano de subtitulos fuera de rango.")
 
     # Estilo forzado para FFmpeg (colores en formato BGR hex de ASS)
     estilo = (
@@ -182,6 +191,8 @@ def incrustar_subtitulos(
         "-vf", filtro_sub,
         "-c:a", "copy",     # Audio ya está listo, no recodificar
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
+        "-movflags", "+faststart",
         nombre_out
     ]
 

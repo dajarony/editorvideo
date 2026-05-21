@@ -1,17 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests unitarios — Función de conversión de tiempo SRT (Módulo 4).
-Importa solo la función pura, no todo el módulo (whisper es pesado).
-"""
-import math
+"""Tests unitarios - funcion de conversion de tiempo SRT (Modulo 4)."""
+import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-
-def segundos_a_srt(segundos: float) -> str:
-    """Copia local de la función para testear sin importar whisper."""
-    horas = int(segundos // 3600)
-    minutos = int((segundos % 3600) // 60)
-    segs = int(segundos % 60)
-    milisegs = int(round((segundos - int(segundos)) * 1000))
-    return f"{horas:02d}:{minutos:02d}:{segs:02d},{milisegs:03d}"
+from modulos.subtitulos import segundos_a_srt
 
 
 class TestSegundosASrt:
@@ -35,3 +28,6 @@ class TestSegundosASrt:
 
     def test_precision_milisegundos(self):
         assert segundos_a_srt(10.999) == "00:00:10,999"
+
+    def test_redondeo_con_acarreo(self):
+        assert segundos_a_srt(10.9996) == "00:00:11,000"

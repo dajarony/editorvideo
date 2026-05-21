@@ -5,7 +5,9 @@ import sys
 import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from modulos.montador_video import calcular_timeline, _construir_filtro_video
+from modulos.montador_video import (
+    calcular_timeline, _construir_filtro_video, _hay_crossfade_real
+)
 
 
 class TestCalcularTimeline:
@@ -59,35 +61,35 @@ class TestConstruirFiltroVideo:
         }
 
     def test_filtro_basico_contiene_scale_y_fps(self):
-        filtro = _construir_filtro_video(self._escena_base(), "1920x1080", 30, 1, 0)
+        filtro = _construir_filtro_video(self._escena_base(), "1920x1080", 30)
         assert "scale=1920:1080" in filtro
         assert "fps=30" in filtro
 
     def test_filtro_contiene_tpad(self):
-        filtro = _construir_filtro_video(self._escena_base(), "1920x1080", 30, 1, 0)
+        filtro = _construir_filtro_video(self._escena_base(), "1920x1080", 30)
         assert "tpad" in filtro
 
     def test_fade_from_black_agrega_fade_in(self):
         escena = self._escena_base(trans_in="fade_from_black")
-        filtro = _construir_filtro_video(escena, "1920x1080", 30, 1, 0)
+        filtro = _construir_filtro_video(escena, "1920x1080", 30)
         assert "fade=t=in" in filtro
 
     def test_fade_to_black_agrega_fade_out(self):
         escena = self._escena_base(trans_out="fade_to_black")
-        filtro = _construir_filtro_video(escena, "1920x1080", 30, 1, 0)
+        filtro = _construir_filtro_video(escena, "1920x1080", 30)
         assert "fade=t=out" in filtro
 
-    def test_crossfade_entrada_agrega_fade_in(self):
+    def test_crossfade_no_agrega_fade_intra_clip(self):
         escena = self._escena_base(trans_in="crossfade")
-        filtro = _construir_filtro_video(escena, "1920x1080", 30, 2, 1)
-        assert "fade=t=in" in filtro
+        filtro = _construir_filtro_video(escena, "1920x1080", 30)
+        assert "fade=t=in" not in filtro
 
-    def test_crossfade_salida_agrega_fade_out(self):
+    def test_crossfade_se_detecta_como_transicion_inter_clip(self):
         escena = self._escena_base(trans_out="crossfade")
-        filtro = _construir_filtro_video(escena, "1920x1080", 30, 2, 0)
-        assert "fade=t=out" in filtro
+        timeline = {"escenas": [escena, self._escena_base()]}
+        assert _hay_crossfade_real(timeline) is True
 
     def test_cut_no_agrega_fades(self):
-        filtro = _construir_filtro_video(self._escena_base(), "1920x1080", 30, 1, 0)
+        filtro = _construir_filtro_video(self._escena_base(), "1920x1080", 30)
         assert "fade=t=in" not in filtro
         assert "fade=t=out" not in filtro

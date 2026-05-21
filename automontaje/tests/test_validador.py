@@ -82,6 +82,27 @@ class TestValidadorEscenas:
         assert any("inválido" in e.lower() or "ausente" in e.lower() for e in res["errores"])
 
 
+    def test_id_inseguro_genera_error(self, tmp_path):
+        data = {
+            "titulo": "T", "idioma": "es",
+            "narrador": {"voz": "es-ES-AlvaroNeural"},
+            "escenas": [{"id": "../mal", "clip": "c.mp4", "texto_narracion": "Texto largo suficiente."}]
+        }
+        (tmp_path / "proyecto.json").write_text(json.dumps(data), encoding="utf-8")
+        res = inicializar_validador(str(tmp_path))
+        assert any("id" in e.lower() and "obligatorio" in e.lower() for e in res["errores"])
+
+    def test_clip_fuera_del_proyecto_genera_error(self, tmp_path):
+        data = {
+            "titulo": "T", "idioma": "es",
+            "narrador": {"voz": "es-ES-AlvaroNeural"},
+            "escenas": [{"id": "s1", "clip": "../fuera.mp4", "texto_narracion": "Texto largo suficiente."}]
+        }
+        (tmp_path / "proyecto.json").write_text(json.dumps(data), encoding="utf-8")
+        res = inicializar_validador(str(tmp_path))
+        assert any("ruta de clip invalida" in e.lower() for e in res["errores"])
+
+
 class TestValidadorMusica:
     def test_musica_archivo_inexistente_genera_error(self, tmp_path):
         data = {
@@ -115,6 +136,40 @@ class TestValidadorNarrador:
         (tmp_path / "proyecto.json").write_text(json.dumps(data), encoding="utf-8")
         res = inicializar_validador(str(tmp_path))
         assert any("conocida" in w.lower() or "verificada" in w.lower() for w in res["warnings"])
+
+
+    def test_velocidad_insegura_genera_error(self, tmp_path):
+        data = {
+            "titulo": "T", "idioma": "es",
+            "narrador": {"voz": "es-ES-AlvaroNeural", "velocidad": "-5%;bad"},
+            "escenas": [{"id": "s1", "clip": "c.mp4", "texto_narracion": "Texto de prueba largo."}]
+        }
+        (tmp_path / "proyecto.json").write_text(json.dumps(data), encoding="utf-8")
+        res = inicializar_validador(str(tmp_path))
+        assert any("velocidad" in e.lower() for e in res["errores"])
+
+
+class TestValidadorSalidaFFmpeg:
+    def test_resolucion_insegura_genera_error(self, tmp_path):
+        data = {
+            "titulo": "T", "idioma": "es", "resolucion": "1920:1080,bad",
+            "narrador": {"voz": "es-ES-AlvaroNeural"},
+            "escenas": [{"id": "s1", "clip": "c.mp4", "texto_narracion": "Texto de prueba largo."}]
+        }
+        (tmp_path / "proyecto.json").write_text(json.dumps(data), encoding="utf-8")
+        res = inicializar_validador(str(tmp_path))
+        assert any("resolucion" in e.lower() for e in res["errores"])
+
+    def test_fuente_subtitulos_insegura_genera_error(self, tmp_path):
+        data = {
+            "titulo": "T", "idioma": "es",
+            "narrador": {"voz": "es-ES-AlvaroNeural"},
+            "subtitulos": {"generar": True, "fuente": "Arial,PrimaryColour=&H0"},
+            "escenas": [{"id": "s1", "clip": "c.mp4", "texto_narracion": "Texto de prueba largo."}]
+        }
+        (tmp_path / "proyecto.json").write_text(json.dumps(data), encoding="utf-8")
+        res = inicializar_validador(str(tmp_path))
+        assert any("subtitulos.fuente" in e.lower() for e in res["errores"])
 
 
 class TestValidadorLogicaTiempos:

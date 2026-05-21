@@ -31,9 +31,15 @@ import edge_tts
 
 # Fix para Windows: aiodns requiere SelectorEventLoop
 if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from .utilidades import obtener_info_media, logger, hash_tts
+from .utilidades import (
+    obtener_info_media, logger, hash_tts, validar_id_escena,
+    validar_velocidad_tts, ruta_segura_proyecto
+)
 from configuracion import (
     DURACION_MINIMA_AUDIO_SEG,
     REINTENTOS_MAXIMOS_TTS,
@@ -44,6 +50,9 @@ from configuracion import (
     ARCHIVO_DURACIONES,
     ARCHIVO_CACHE_TTS
 )
+
+
+MAX_CONCURRENCIA_TTS = 4
 
 
 def _cargar_cache(ruta_cache: str) -> dict:
@@ -86,6 +95,19 @@ async def generar_audio_escena(
     Returns:
         dict con id, archivo, duracion_real_seg y exito (bool).
     """
+    if not validar_id_escena(id_escena):
+        return {
+            "id": id_escena,
+            "exito": False,
+            "error": "ID de escena inseguro."
+        }
+    if not validar_velocidad_tts(velocidad):
+        return {
+            "id": id_escena,
+            "exito": False,
+            "error": "Velocidad TTS invalida."
+        }
+
     ultimo_error = "desconocido"
 
     for intento in range(REINTENTOS_MAXIMOS_TTS + 1):
@@ -185,9 +207,17 @@ async def ejecutar_narracion_concurrente(
     tareas = []
     indices = []  # Para mapear cada tarea a su escena
     nuevo_cache = dict(cache)
+    semaforo = asyncio.Semaphore(MAX_CONCURRENCIA_TTS)
+
+    async def _generar_limitado(*args):
+        async with semaforo:
+            return await generar_audio_escena(*args)
 
     for escena in escenas:
         id_escena = escena["id"]
+        if not validar_id_escena(id_escena):
+            errores.append({"id": id_escena, "error": "ID de escena inseguro."})
+            continue
         texto = escena["texto_narracion"]
         ruta_mp3 = os.path.join(ruta_output_narracion, f"{id_escena}.mp3")
 
@@ -196,8 +226,11 @@ async def ejecutar_narracion_concurrente(
 
         # ── Cache hit ──
         if entrada:
-            ruta_cache_mp3 = os.path.join(ruta_proyecto, entrada["archivo"])
-            if os.path.exists(ruta_cache_mp3):
+            try:
+                ruta_cache_mp3 = ruta_segura_proyecto(ruta_proyecto, entrada["archivo"])
+            except (KeyError, ValueError):
+                ruta_cache_mp3 = None
+            if ruta_cache_mp3 and os.path.exists(ruta_cache_mp3):
                 # Si el archivo cacheado no es el destino esperado, copiar
                 if os.path.abspath(ruta_cache_mp3) != os.path.abspath(ruta_mp3):
                     import shutil
@@ -214,7 +247,7 @@ async def ejecutar_narracion_concurrente(
 
         # ── Cache miss → generar ──
         tareas.append(
-            generar_audio_escena(id_escena, texto, voz, velocidad, ruta_mp3)
+            _generar_limitado(id_escena, texto, voz, velocidad, ruta_mp3)
         )
         indices.append((id_escena, firma))
 

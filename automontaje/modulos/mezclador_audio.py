@@ -34,7 +34,7 @@ from configuracion import (
     ARCHIVO_AUDIO_MEZCLADO,
     FADE_DUCK_MS
 )
-from .utilidades import logger
+from .utilidades import logger, ruta_segura_proyecto
 
 
 def lineal_a_db(volumen_lineal: float) -> float:
@@ -104,7 +104,9 @@ def mezclar_audio_proyecto(ruta_proyecto: str, datos_proyecto: dict) -> dict:
             pausa_antes_ms = int(escena.get("pausa_antes_seg", 0) * 1000)
             pausa_despues_ms = int(escena.get("pausa_despues_seg", 0) * 1000)
 
-            ruta_audio_voz = os.path.join(ruta_proyecto, duraciones[id_escena]["archivo"])
+            ruta_audio_voz = ruta_segura_proyecto(
+                ruta_proyecto, duraciones[id_escena]["archivo"]
+            )
             audio_escena = AudioSegment.from_file(ruta_audio_voz)
             duracion_real_ms = len(audio_escena)
 
@@ -141,7 +143,7 @@ def mezclar_audio_proyecto(ruta_proyecto: str, datos_proyecto: dict) -> dict:
         )
 
         if tiene_musica:
-            ruta_musica = os.path.join(
+            ruta_musica = ruta_segura_proyecto(
                 ruta_proyecto, datos_musica.get("archivo", "")
             )
 

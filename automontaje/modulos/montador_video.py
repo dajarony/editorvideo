@@ -35,7 +35,10 @@ from configuracion import (
     ARCHIVO_TIMELINE, ARCHIVO_AUDIO_MEZCLADO, ARCHIVO_VIDEO_FINAL,
     RESOLUCION_DEFAULT, FPS_DEFAULT, FADE_TRANSICION_SEG
 )
-from .utilidades import logger, obtener_info_media
+from .utilidades import (
+    logger, obtener_info_media, ruta_segura_proyecto, validar_id_escena,
+    validar_resolucion, normalizar_fps
+)
 
 
 # Transiciones que NO solapan clips (se aplican intra-clip)
@@ -69,6 +72,8 @@ def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
 
     for escena in datos_proyecto.get("escenas", []):
         id_escena = escena["id"]
+        if not validar_id_escena(id_escena):
+            raise ValueError(f"ID de escena inseguro: {id_escena}")
         if id_escena not in duraciones:
             logger.warning(f"Escena '{id_escena}' sin audio. Omitida del timeline.")
             continue
@@ -78,7 +83,7 @@ def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
         dur_voz = float(duraciones[id_escena]["duracion_real_seg"])
         duracion_escena = pausa_antes + dur_voz + pausa_despues
 
-        ruta_clip = os.path.join(ruta_proyecto, escena["clip"])
+        ruta_clip = ruta_segura_proyecto(ruta_proyecto, escena["clip"])
         info_clip = obtener_info_media(ruta_clip)
         duracion_disponible = float(info_clip.get("duracion", 0))
 
@@ -132,6 +137,9 @@ def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
 
 def _construir_filtro_video(escena: dict, resolucion: str, fps: int) -> str:
     """Construye filtros FFmpeg INTRA-clip (sin xfade)."""
+    if not validar_resolucion(resolucion):
+        raise ValueError(f"Resolucion invalida: {resolucion}")
+    fps = normalizar_fps(fps)
     dur = escena["duracion_necesaria"]
     fade_seg = FADE_TRANSICION_SEG
     trans_in = escena.get("transicion_entrada", "cut")
@@ -176,7 +184,9 @@ def procesar_clips_individuales(
 
     for idx, escena in enumerate(timeline["escenas"]):
         id_escena = escena["id"]
-        ruta_origen = os.path.join(ruta_proyecto, escena["clip_usado"])
+        if not validar_id_escena(id_escena):
+            raise ValueError(f"ID de escena inseguro: {id_escena}")
+        ruta_origen = ruta_segura_proyecto(ruta_proyecto, escena["clip_usado"])
         ruta_destino = os.path.join(ruta_temp, f"{idx:03d}_{id_escena}.mp4")
 
         dur_necesaria = escena["duracion_necesaria"]
@@ -362,7 +372,9 @@ def montar_video_proyecto(ruta_proyecto: str, datos_proyecto: dict) -> dict:
     """Orquestador interno del Módulo 3 — Montaje de Vídeo."""
     try:
         resolucion = datos_proyecto.get("resolucion", RESOLUCION_DEFAULT)
-        fps = datos_proyecto.get("fps", FPS_DEFAULT)
+        if not validar_resolucion(resolucion):
+            raise ValueError(f"Resolucion invalida: {resolucion}")
+        fps = normalizar_fps(datos_proyecto.get("fps", FPS_DEFAULT))
 
         logger.info("Fase 3.1: Calculando timeline matemático...")
         timeline = calcular_timeline(ruta_proyecto, datos_proyecto)
