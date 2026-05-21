@@ -276,7 +276,7 @@ Trigger (tiempo / RSS / comentario / manual)
         ▼
    N8N Workflow
         │
-        ├─► Claude API  →  genera guión JSON automáticamente
+        ├─► API de IA (LLM)  →  genera guión JSON automáticamente
         │
         ├─► Higgsfield  →  genera clips de vídeo IA
         │
@@ -303,7 +303,7 @@ Trigger (tiempo / RSS / comentario / manual)
 ```
 N8N (self-hosted, gratis)
   │
-  ├── Claude API  (~0.01$/guión)
+  ├── API de IA (LLM)  (~0.01$/guión)
   ├── Higgsfield  (créditos según plan)
   ├── AEGS        (tu herramienta, cero coste)
   ├── YouTube API (gratis con límites)
@@ -318,7 +318,7 @@ Coste estimado por vídeo: 0.05$ - 0.50$ dependiendo de clips IA usados
 ```
 [Cron / RSS / Webhook]
         ↓
-[HTTP Request → Claude API]  ← genera proyecto.json
+[HTTP Request → API de IA (LLM)]  ← genera proyecto.json
         ↓
 [Execute Command → AEGS]      ← renderiza el vídeo
         ↓
