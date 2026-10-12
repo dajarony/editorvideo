@@ -31,7 +31,7 @@ from configuracion import (
     ARCHIVO_VIDEO_FINAL, ARCHIVO_SRT, ARCHIVO_VIDEO_SUB,
     MODELO_WHISPER
 )
-from .utilidades import logger, ruta_segura_proyecto, validar_fuente_subtitulos
+from .utilidades import binario, logger, ruta_segura_proyecto, validar_fuente_subtitulos
 
 
 def segundos_a_srt(segundos: float) -> str:
@@ -87,8 +87,8 @@ def generar_srt_matematico(ruta_proyecto: str, datos_proyecto: dict) -> str:
         import whisper
     except ImportError:
         raise ImportError(
-            "Whisper no está instalado. Ejecuta: pip install openai-whisper"
-        )
+            'Whisper no está instalado (es opcional). Para subtítulos: pip install "automontaje[subtitulos]"'
+        ) from None
     modelo = whisper.load_model(MODELO_WHISPER)
 
     lineas_srt = []
@@ -186,7 +186,7 @@ def incrustar_subtitulos(
     filtro_sub = f"subtitles={nombre_srt}:force_style='{estilo}'"
 
     comando = [
-        "ffmpeg", "-y", "-v", "error",
+        binario("ffmpeg"), "-y", "-v", "error",
         "-i", nombre_in,
         "-vf", filtro_sub,
         "-c:a", "copy",     # Audio ya está listo, no recodificar

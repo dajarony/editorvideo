@@ -1,0 +1,28 @@
+name: CI - AEGS
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: automontaje/pyproject.toml
+      - name: FFmpeg del sistema
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # Instalación mínima: sin Whisper ni PyTorch (extra opcional `subtitulos`).
+      - run: python -m pip install -e "automontaje[dev]"
+      - name: Sin PyTorch ni Whisper en la instalación mínima
+        run: python -c "import importlib.util as u, sys; sys.exit(any(u.find_spec(m) for m in ('torch', 'whisper')))"
+      # Los tests de Edge TTS real se omiten: CI no depende de un servicio externo.
+      - run: python -m pytest automontaje/tests -q -rs

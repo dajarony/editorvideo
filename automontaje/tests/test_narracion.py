@@ -16,8 +16,9 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
+@pytest.mark.internet
 class TestEdgeTTSDirecto:
-    """Tests de la API edge-tts directamente (sin ffprobe)."""
+    """Tests de la API edge-tts directamente (sin ffprobe). Necesitan red."""
 
     @pytest.mark.asyncio
     async def test_edge_tts_genera_archivo(self, tmp_path):

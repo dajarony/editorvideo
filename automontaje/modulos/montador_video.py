@@ -36,6 +36,7 @@ from configuracion import (
     RESOLUCION_DEFAULT, FPS_DEFAULT, FADE_TRANSICION_SEG
 )
 from .utilidades import (
+    binario,
     logger, obtener_info_media, ruta_segura_proyecto, validar_id_escena,
     validar_resolucion, normalizar_fps
 )
@@ -194,7 +195,7 @@ def procesar_clips_individuales(
         vf_filters = _construir_filtro_video(escena, resolucion, fps)
 
         comando = [
-            "ffmpeg", "-y", "-v", "error",
+            binario("ffmpeg"), "-y", "-v", "error",
             "-ss", str(inicio_trim),
             "-i", ruta_origen,
             "-t", str(dur_necesaria),
@@ -244,7 +245,7 @@ def _ensamblar_concat_demuxer(
     ruta_video_final = os.path.join(ruta_proyecto, CARPETA_OUTPUT, ARCHIVO_VIDEO_FINAL)
 
     comando = [
-        "ffmpeg", "-y", "-v", "error",
+        binario("ffmpeg"), "-y", "-v", "error",
         "-f", "concat", "-safe", "0",
         "-i", lista_concat,
         "-i", ruta_audio,
@@ -324,7 +325,7 @@ def _ensamblar_xfade(
     filter_complex = ";".join(partes_filter)
 
     comando = [
-        "ffmpeg", "-y", "-v", "error",
+        binario("ffmpeg"), "-y", "-v", "error",
         *inputs,
         "-filter_complex", filter_complex,
         "-map", "[vout]",
