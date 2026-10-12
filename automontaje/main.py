@@ -28,12 +28,15 @@ import argparse
 from modulos.utilidades import (
     logger, activar_log_archivo, limpiar_carpeta_temporal, verificar_ffmpeg
 )
-from modulos.validador import errores_duracion_estricta, inicializar_validador
+from modulos.validador import inicializar_validador
 from modulos.narracion import ejecutar_narracion_concurrente
 from modulos.mezclador_audio import mezclar_audio_proyecto
 from modulos.montador_video import montar_video_proyecto
 from modulos.subtitulos import procesar_subtitulos
-from configuracion import CARPETA_LOGS, ARCHIVO_LOG, CARPETA_NARRACION, CARPETA_TEMP
+from configuracion import (
+    CARPETA_LOGS, ARCHIVO_LOG, CARPETA_NARRACION, CARPETA_TEMP, CARPETA_OUTPUT,
+    ARCHIVO_VIDEO_FINAL, ARCHIVO_VIDEO_SUB, MOTOR_NARRACION_DEFAULT
+)
 
 
 def parse_args(argv=None):
@@ -79,7 +82,10 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--solo-narracion", action="store_true",
-        help="Valida y genera la narración (narracion_duraciones.json) y se detiene, sin montar vídeo.",
+        help=(
+            "Valida y genera la narración (narracion_duraciones.json) y se detiene, sin montar "
+            "vídeo. Los clips aún pueden no existir."
+        ),
     )
     parser.add_argument(
         "--duracion-estricta", action="store_true",
@@ -92,7 +98,10 @@ def parse_args(argv=None):
         "-v", "--verbose", action="store_true",
         help="Logging detallado en consola."
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.solo_narracion and args.skip_tts:
+        parser.error("--solo-narracion genera la narración: no se puede combinar con --skip-tts.")
+    return args
 
 
 def mostrar_resumen(ruta_video, timeline, warnings, tiempo_total, srt=None):
@@ -145,11 +154,24 @@ async def orquestador(ruta_proyecto: str, args):
     # ═══ FASE 0: VALIDACIÓN ═════════════════════════════
     logger.info("")
     logger.info("━━━ FASE 0: Verificando integridad del proyecto ━━━")
-    res_val = inicializar_validador(ruta_proyecto)
+    res_val = inicializar_validador(
+        ruta_proyecto,
+        requiere_clips=not args.solo_narracion,
+        duracion_estricta=args.duracion_estricta,
+    )
 
     warnings_proyecto = res_val.get("warnings", [])
     for warn in warnings_proyecto:
         logger.warning(f"  ⚠ {warn}")
+
+    montaje = res_val.get("datos", {}).get("montaje")
+    if args.duracion_estricta or (isinstance(montaje, dict) and montaje.get("duracion_estricta") is True):
+        # Si esta ejecución falla en cualquier fase, no debe quedar a la vista el vídeo de una anterior.
+        for nombre in (ARCHIVO_VIDEO_FINAL, ARCHIVO_VIDEO_SUB):
+            ruta_previa = os.path.join(ruta_proyecto, CARPETA_OUTPUT, nombre)
+            if os.path.isfile(ruta_previa):
+                os.remove(ruta_previa)
+                logger.info(f"  Duración estricta: eliminado {nombre} de una ejecución anterior.")
 
     if not res_val.get("exito"):
         logger.error("FALLO EN FASE 0 — VALIDACIÓN. ABORTANDO.")
@@ -158,18 +180,11 @@ async def orquestador(ruta_proyecto: str, args):
         sys.exit(1)
 
     datos = aplicar_overrides_cli(res_val["datos"], args)
-    if args.duracion_estricta:
-        errores_estricto = errores_duracion_estricta(datos)
-        if errores_estricto:
-            logger.error("FALLO EN FASE 0 — VALIDACIÓN (--duracion-estricta). ABORTANDO.")
-            for err in errores_estricto:
-                logger.error(f"  ✗ {err}")
-            sys.exit(1)
     logger.info("  ✓ Proyecto validado correctamente.")
 
     # ═══ FASE 1: NARRACIÓN TTS ══════════════════════════
     logger.info("")
-    motor = datos.get("narrador", {}).get("motor", "edge-tts")
+    motor = datos.get("narrador", {}).get("motor", MOTOR_NARRACION_DEFAULT)
     logger.info(f"━━━ FASE 1: Generando narración ({motor}) ━━━")
 
     if args.skip_tts:

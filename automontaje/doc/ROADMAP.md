@@ -32,7 +32,7 @@ video_final.mp4 + subtitulos.srt
 | `mezclador_audio.py` | ✅ Fix div-zero | pista vacía y música 0ms protegidas |
 | `montador_video.py` | ✅ xfade real | filter_complex encadenado + GOP fijo |
 | `subtitulos.py` | ✅ UTF-8 BOM + sidecar | FFmpeg Windows compatible |
-| `main.py` | ✅ argparse CLI | --skip-tts, --skip-subs, --no-cache, --keep-temp, --srt-sidecar |
+| `main.py` | ✅ argparse CLI | --skip-tts, --skip-subs, --no-cache, --keep-temp, --srt-sidecar, --solo-narracion, --duracion-estricta |
 | `utilidades.py` | ✅ verificar_ffmpeg + hash_tts | check al arranque + SHA-1 |
 | `configuracion.py` | ✅ constantes centralizadas | caché, reintentos, backoff, fade |
 

@@ -94,7 +94,7 @@ cd "C:\ruta\a\editorvideo"
 python -m pytest automontaje/tests -q
 ```
 
-Deberías ver `100 passed, 4 skipped`: los 4 omitidos son los que llaman a Edge TTS real y solo se ejecutan con `AEGS_TEST_INTERNET=1`.
+Deberías ver `133 passed, 4 skipped`: los 4 omitidos son los que llaman a Edge TTS real y solo se ejecutan con `AEGS_TEST_INTERNET=1`. Sin FFmpeg se omiten además los 16 casos de integración que montan vídeo.
 
 ---
 

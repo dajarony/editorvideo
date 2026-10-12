@@ -29,16 +29,14 @@ from .utilidades import (
     validar_fuente_subtitulos
 )
 from configuracion import (
-    ARCHIVO_PROYECTO, VOCES_EDGE_CONOCIDAS, RESOLUCION_DEFAULT, FPS_DEFAULT
+    ARCHIVO_PROYECTO, VOCES_EDGE_CONOCIDAS, RESOLUCION_DEFAULT, FPS_DEFAULT,
+    MOTOR_NARRACION_DEFAULT, MOTORES_NARRACION
 )
 
 
 TRANSICIONES_VALIDAS = {
     "cut", "fade_from_black", "fade_to_black", "dip_to_black", "crossfade"
 }
-
-MOTORES_NARRACION = {"edge-tts", "sintetico"}
-
 
 def errores_duracion_estricta(datos: dict) -> list:
     """Errores del modo duración estricta: solo se admiten cortes secos.
@@ -47,7 +45,8 @@ def errores_duracion_estricta(datos: dict) -> list:
     la suma exacta de las escenas que ya se renderizaron a medida.
     """
     errores = []
-    for escena in datos.get("escenas", []):
+    escenas = datos.get("escenas", [])
+    for escena in escenas if isinstance(escenas, list) else []:
         if not isinstance(escena, dict):
             continue
         for campo in ("transicion_entrada", "transicion_salida"):
@@ -64,7 +63,9 @@ def _es_numero(valor) -> bool:
     return isinstance(valor, (int, float)) and not isinstance(valor, bool)
 
 
-def inicializar_validador(ruta_proyecto: str) -> dict:
+def inicializar_validador(
+    ruta_proyecto: str, requiere_clips: bool = True, duracion_estricta: bool = False
+) -> dict:
     """Valida la integridad total de un proyecto antes de procesarlo.
 
     Ejecuta validaciones obligatorias (bloquean el proceso si fallan)
@@ -72,6 +73,10 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
 
     Args:
         ruta_proyecto: Ruta absoluta a la carpeta del proyecto.
+        requiere_clips: Si es False (--solo-narracion), un clip ausente o ilegible es un warning:
+            en el flujo "narración primero" los clips se renderizan después de medir la voz.
+        duracion_estricta: Activa las reglas del modo duración estricta aunque el JSON no lo pida
+            (flag --duracion-estricta).
 
     Returns:
         dict con exito (bool), errores (list), warnings (list),
@@ -131,21 +136,20 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
                 f"El campo 'narrador' debe ser un objeto JSON, no {type(narrador).__name__}."
             )
         else:
-            motor = narrador.get("motor", "edge-tts")
+            motor = narrador.get("motor", MOTOR_NARRACION_DEFAULT)
             voz = narrador.get("voz", "")
-            if motor not in MOTORES_NARRACION:
+            if not isinstance(motor, str) or motor not in MOTORES_NARRACION:
                 errores.append(
                     f"'narrador.motor' no válido: {motor!r}. Usa 'edge-tts' o 'sintetico' (voz de prueba sin red)."
                 )
-            elif motor == "sintetico":
-                pass  # la voz sintética no usa 'voz'
-            elif not voz:
-                errores.append("El narrador no tiene 'voz' definida.")
-            elif voz not in VOCES_EDGE_CONOCIDAS:
-                warnings.append(
-                    f"Voz '{voz}' no está en la lista conocida. "
-                    f"Podría funcionar si es válida en Edge TTS, pero no ha sido verificada."
-                )
+            elif motor == "edge-tts":  # la voz sintética no usa 'voz'
+                if not voz:
+                    errores.append("El narrador no tiene 'voz' definida.")
+                elif voz not in VOCES_EDGE_CONOCIDAS:
+                    warnings.append(
+                        f"Voz '{voz}' no está en la lista conocida. "
+                        f"Podría funcionar si es válida en Edge TTS, pero no ha sido verificada."
+                    )
 
             if "velocidad" not in narrador:
                 warnings.append("No se definió 'velocidad' para el narrador. Se usará +0%.")
@@ -158,7 +162,7 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
     montaje = datos.get("montaje", {})
     if not isinstance(montaje, dict) or not isinstance(montaje.get("duracion_estricta", False), bool):
         errores.append("'montaje' debe ser un objeto y 'montaje.duracion_estricta' un booleano.")
-    elif montaje.get("duracion_estricta"):
+    elif duracion_estricta or montaje.get("duracion_estricta"):
         errores.extend(errores_duracion_estricta(datos))
 
     # ─── Validación de Escenas ──────────────────────────
@@ -226,9 +230,8 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
         info_clip = obtener_info_media(ruta_clip)
 
         if "error" in info_clip:
-            errores.append(
-                f"Clip inválido o ausente en '{id_escena}': {info_clip['error']}"
-            )
+            mensaje = f"Clip inválido o ausente en '{id_escena}': {info_clip['error']}"
+            (errores if requiere_clips else warnings).append(mensaje)
         else:
             duracion = info_clip.get("duracion", 0)
             metadatos_clips[id_escena] = info_clip

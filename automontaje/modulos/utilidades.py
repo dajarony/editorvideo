@@ -191,6 +191,9 @@ def obtener_info_media(ruta_archivo: str) -> dict:
             if stream.get("codec_type") == "video":
                 info["resolucion"] = f"{stream.get('width', 0)}x{stream.get('height', 0)}"
                 info["codec"] = stream.get("codec_name", "N/A")
+                # La del contenedor es la de la pista más larga; esta es la de la imagen (si el
+                # formato la da por pista, como MP4/MOV; si no, la del contenedor).
+                info["duracion_video"] = float(stream.get("duration") or info["duracion"])
                 break
             elif stream.get("codec_type") == "audio" and info["codec"] == "N/A":
                 info["codec"] = stream.get("codec_name", "N/A")

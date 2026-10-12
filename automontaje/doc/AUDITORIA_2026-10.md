@@ -59,3 +59,82 @@ duracion_escena = pausa_antes + duracion_narracion + pausa_despues
 Si el clip dura **más**, se recorta; si dura **menos**, se congela su último fotograma (`tpad=stop_mode=clone`). Con un clip de Motion Canvas eso corta la animación a medias o la deja parada. Además, las transiciones `crossfade` solapan escenas y cambian la duración total.
 
 Solución acordada (fase F3a): **narración primero**. AEGS genera y mide la voz (`--solo-narracion`), Aura Motion Studio renderiza cada escena exactamente a esa duración, y AEGS monta con `--duracion-estricta`, que falla en vez de recortar o congelar y solo admite cortes secos.
+
+## Evidencia de F3a — C7: instalación desde una rueda
+
+Rueda construida con el código de cierre de F3a (el mismo árbol que pasa el último gate de la fase; se rehace en cada intento que toca el código), instalada en un venv limpio de Python 3.15 en una carpeta temporal **fuera del repositorio**; `aegs` se ejecuta desde allí. Salida literal; solo se sustituyen la ruta del repositorio por `<repo>` y la de la carpeta temporal por `<tmp>`. `ok` y `exit=` los imprime el propio script de la prueba (el código de salida de `aegs` se capturó sin tuberías por medio). El aviso de pydub (`Couldn't find ffmpeg`) lo emite pydub al importarse, antes de que AEGS le indique `AEGS_FFMPEG`/`AEGS_FFPROBE`; sale en las dos órdenes y no impide nada: la segunda valida, narra y escribe las duraciones con exit 0.
+
+```text
+$ python -m venv venv-wheel   # cwd: carpeta temporal fuera del repositorio
+ok
+$ venv-wheel/Scripts/python -m pip wheel <repo>/automontaje --no-deps -w dist -q
+aegs_automontaje-0.2.0-py3-none-any.whl
+$ venv-wheel/Scripts/python -m pip install dist/*.whl -q
+$ venv-wheel/Scripts/python -m pip list | grep -iE "aegs|edge|torch|whisper"
+aegs-automontaje  0.2.0
+edge-tts          7.2.8
+$ venv-wheel/Scripts/aegs --help
+<tmp>\venv-wheel\Lib\site-packages\pydub\utils.py:170: RuntimeWarning: Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work
+  warn("Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work", RuntimeWarning)
+usage: aegs [-h] [--skip-subs] [--skip-tts] [--no-cache] [--keep-temp]
+            [--srt-sidecar] [--solo-narracion] [--duracion-estricta] [-v]
+            ruta_proyecto
+
+AEGS — Sistema de Automontaje de Vídeo. Convierte un proyecto.json en un vídeo final con narración, música y subtítulos.
+
+positional arguments:
+  ruta_proyecto        Ruta a la carpeta que contiene proyecto.json
+
+options:
+  -h, --help           show this help message and exit
+  --skip-subs          Omite la fase de subtítulos aunque el JSON los pida.
+  --skip-tts           No regenera narraciones; usa solo lo que ya hay en
+                       disco.
+  --no-cache           Ignora la caché TTS y fuerza regenerar todas las voces.
+  --keep-temp          Conserva la carpeta de clips temporales tras
+                       renderizar.
+  --srt-sidecar        Genera SRT pero NO lo quema en el vídeo (modo sidecar).
+  --solo-narracion     Valida y genera la narración
+                       (narracion_duraciones.json) y se detiene, sin montar
+                       vídeo. Los clips aún pueden no existir.
+  --duracion-estricta  Cada clip debe durar lo que su escena (±1 fotograma):
+                       si no, falla en vez de recortarlo o congelarlo. Solo
+                       admite transiciones 'cut'.
+  -v, --verbose        Logging detallado en consola.
+
+Ejemplos:
+  python main.py ./mi_video/
+  python main.py ./mi_video/ --skip-subs
+  python main.py ./mi_video/ --no-cache --keep-temp
+exit=0
+$ venv-wheel/Scripts/aegs demo --solo-narracion   # motor "sintetico", sin clips; AEGS_FFMPEG/AEGS_FFPROBE definidas
+<tmp>\venv-wheel\Lib\site-packages\pydub\utils.py:170: RuntimeWarning: Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work
+  warn("Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work", RuntimeWarning)
+2026-10-13 00:00:00 [INFO] ╔═══════════════════════════════════════════════════════╗
+2026-10-13 00:00:00 [INFO] ║     AEGS — SISTEMA DE AUTOMONTAJE DE VÍDEO          ║
+2026-10-13 00:00:00 [INFO] ║  Proyecto: demo                                      ║
+2026-10-13 00:00:00 [INFO] ╚═══════════════════════════════════════════════════════╝
+2026-10-13 00:00:01 [INFO]   ✓ FFmpeg detectado: ffmpeg version N-92722-gf22fcd4483 Copyright (c) 2000-2018 t
+2026-10-13 00:00:01 [INFO] 
+2026-10-13 00:00:01 [INFO] ━━━ FASE 0: Verificando integridad del proyecto ━━━
+2026-10-13 00:00:01 [INFO] Validación completada: 1 escenas, 2 warnings, 0 errores.
+2026-10-13 00:00:01 [WARNING]   ⚠ Clip inválido o ausente en 'hola': Archivo no encontrado: <tmp>\demo\clips\hola.mp4
+2026-10-13 00:00:01 [WARNING]   ⚠ No se definió sección 'musica'. El vídeo se montará solo con narración.
+2026-10-13 00:00:01 [INFO]   ✓ Proyecto validado correctamente.
+2026-10-13 00:00:01 [INFO] 
+2026-10-13 00:00:01 [INFO] ━━━ FASE 1: Generando narración (sintetico) ━━━
+2026-10-13 00:00:01 [INFO]   ✓ Narración sintética 'hola' (2.540s)
+2026-10-13 00:00:01 [INFO] Duraciones guardadas en narracion_duraciones.json
+2026-10-13 00:00:01 [INFO] 
+2026-10-13 00:00:01 [INFO]   --solo-narracion: duraciones en output/narracion_duraciones.json. Sin montaje.
+exit=0
+$ cat demo/output/narracion_duraciones.json
+{
+  "hola": {
+    "archivo": "output/narracion/hola.wav",
+    "duracion_real_seg": 2.54
+  }
+}
+```
+
+La misma instalación desde Git (`pip install "aegs-automontaje @ git+https://github.com/dajarony/editorvideo@<commit>#subdirectory=automontaje"`) se probó también con el commit `d3dba46` (WIP de F3a): `aegs --help` mostraba las dos opciones nuevas y no se instalaron `torch` ni `whisper`. *Esa salida no se guardó; la evidencia de C7 es la de la rueda.*

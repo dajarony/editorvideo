@@ -36,7 +36,8 @@ AEGS_TEST_INTERNET=1 python -m pytest automontaje/tests/test_narracion.py -v    
 | `test_editor_comandos.py` | 10 | Editor por comandos | Ninguna |
 | `test_mejoras.py` | 5 | Mejoras | Ninguna |
 | `test_entorno.py` | 16 | Dependencias, FFmpeg configurable, Whisper opcional, tests de internet | Ninguna |
-| **Total** | **104** | | |
+| `test_integracion_aura.py` | 25 (33 casos con los parámetros) | Narración primero: voz sintética, `--solo-narracion`, duración estricta | FFmpeg para 16 casos (se omiten con motivo si no está) |
+| **Total** | **129** (137 casos) | | |
 
 ---
 
@@ -103,6 +104,12 @@ AEGS_TEST_INTERNET=1 python -m pytest automontaje/tests/test_narracion.py -v    
 - Ningún módulo ni `main.py` llama a ffmpeg/ffprobe sin pasar por `binario()`
 - pydub usa las variables solo si están definidas; sin ellas no cambia nada
 - Sin Whisper, los subtítulos fallan con `pip install "automontaje[subtitulos]"` en el mensaje
+
+### Integración con Aura Motion Studio (25 tests, `test_integracion_aura.py`)
+- Voz sintética: mismo texto y velocidad dan el mismo SHA-256; cada carácter alarga la narración (también a `+50%`); más velocidad, menos duración; velocidad mal formada es un error controlado; no usa Edge TTS
+- Validación: motor desconocido o que no es texto; `escenas` mal tipadas en modo estricto dan error, no excepción; con duración estricta solo se admite `cut`; sin ella `crossfade` sigue valiendo; con `requiere_clips=False` un clip ausente es aviso y lo demás se sigue validando
+- Flujo real con FFmpeg: `--solo-narracion` sin clips todavía; `--solo-narracion --skip-tts` se rechaza; clips a medida dan la suma de las escenas (±1 fotograma), también con 10 escenas que no caen en un fotograma exacto (sin deriva acumulada); un clip 1 s más largo o más corto falla, nombra la escena y las dos duraciones y no deja `video_final.mp4` (ni el de una ejecución anterior, tampoco si falla la validación); un clip con el vídeo 1 s más corto pero el audio hasta el final también falla (no se congela); el flag `--duracion-estricta` activa el modo; `montar_video_proyecto` funciona con una ruta de proyecto relativa
+- Borde de la tolerancia en `calcular_timeline`: ±1 fotograma pasa, ±2 fallan; la rejilla redondea .5 hacia arriba; un clip sin pista de vídeo falla; una escena sin narración falla en modo estricto y se omite sin él
 
 ### Narración TTS (4 tests, todos con red: `AEGS_TEST_INTERNET=1`)
 - Edge TTS genera archivo MP3 real (> 1KB)

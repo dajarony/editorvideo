@@ -18,6 +18,8 @@ DURACION_MINIMA_AUDIO_SEG = 0.5
 REINTENTOS_MAXIMOS_TTS = 3        # Reintentos por escena (rate-limit Edge TTS)
 RETARDO_REINTENTO_TTS_SEG = 2.0   # Espera entre reintentos (backoff)
 USAR_CACHE_TTS = True             # Si True, no regenera narraciones idénticas
+MOTOR_NARRACION_DEFAULT = "edge-tts"
+MOTORES_NARRACION = {"edge-tts", "sintetico"}  # "sintetico": voz de prueba offline (CI)
 
 # ─── Constantes de Vídeo ────────────────────────────────
 RESOLUCION_DEFAULT = "1920x1080"
