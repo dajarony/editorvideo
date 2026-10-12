@@ -70,6 +70,9 @@ def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
 
     timeline = {"duracion_total_seg": 0.0, "escenas": []}
     cursor_seg = 0.0
+    # Con duración estricta, el clip ya viene renderizado a la medida de su escena (Aura Motion Studio).
+    estricta = bool(datos_proyecto.get("montaje", {}).get("duracion_estricta", False))
+    fps = normalizar_fps(datos_proyecto.get("fps", FPS_DEFAULT))
 
     for escena in datos_proyecto.get("escenas", []):
         id_escena = escena["id"]
@@ -94,6 +97,12 @@ def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
             fin_clip = duracion_disponible
 
         dur_segmento_clip = max(0.0, fin_clip - inicio_clip)
+        if estricta and abs(dur_segmento_clip - duracion_escena) > 1.0 / fps + 1e-6:
+            raise ValueError(
+                f"Modo duración estricta: la escena '{id_escena}' necesita {duracion_escena:.3f} s "
+                f"y su clip dura {dur_segmento_clip:.3f} s (tolerancia ±1 fotograma a {fps} fps). "
+                "No se recorta ni se congela: vuelve a renderizar el clip a esa duración."
+            )
         clip_recortado = dur_segmento_clip > duracion_escena
         clip_extendido = dur_segmento_clip < duracion_escena
 
@@ -247,7 +256,10 @@ def _ensamblar_concat_demuxer(
     comando = [
         binario("ffmpeg"), "-y", "-v", "error",
         "-f", "concat", "-safe", "0",
-        "-i", lista_concat,
+        # Por nombre, no por ruta: se ejecuta con cwd=ruta_temp. Algunos FFmpeg de Windows buscan
+        # los clips de la lista en la carpeta del último '/' e ignoran '\' (con CARPETA_TEMP =
+        # "output/temp_clips" los buscaban en output/), y tampoco aceptan 'C:/...' como absoluta.
+        "-i", os.path.basename(lista_concat),
         "-i", ruta_audio,
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",

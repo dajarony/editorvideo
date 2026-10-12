@@ -28,7 +28,7 @@ import argparse
 from modulos.utilidades import (
     logger, activar_log_archivo, limpiar_carpeta_temporal, verificar_ffmpeg
 )
-from modulos.validador import inicializar_validador
+from modulos.validador import errores_duracion_estricta, inicializar_validador
 from modulos.narracion import ejecutar_narracion_concurrente
 from modulos.mezclador_audio import mezclar_audio_proyecto
 from modulos.montador_video import montar_video_proyecto
@@ -78,6 +78,17 @@ def parse_args(argv=None):
         help="Genera SRT pero NO lo quema en el vídeo (modo sidecar)."
     )
     parser.add_argument(
+        "--solo-narracion", action="store_true",
+        help="Valida y genera la narración (narracion_duraciones.json) y se detiene, sin montar vídeo.",
+    )
+    parser.add_argument(
+        "--duracion-estricta", action="store_true",
+        help=(
+            "Cada clip debe durar lo que su escena (±1 fotograma): si no, falla en vez de "
+            "recortarlo o congelarlo. Solo admite transiciones 'cut'."
+        ),
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true",
         help="Logging detallado en consola."
     )
@@ -109,6 +120,8 @@ def aplicar_overrides_cli(datos: dict, args) -> dict:
         datos.setdefault("subtitulos", {})["generar"] = False
     if args.srt_sidecar:
         datos.setdefault("subtitulos", {})["sidecar"] = True
+    if args.duracion_estricta:
+        datos.setdefault("montaje", {})["duracion_estricta"] = True
     return datos
 
 
@@ -145,11 +158,19 @@ async def orquestador(ruta_proyecto: str, args):
         sys.exit(1)
 
     datos = aplicar_overrides_cli(res_val["datos"], args)
+    if args.duracion_estricta:
+        errores_estricto = errores_duracion_estricta(datos)
+        if errores_estricto:
+            logger.error("FALLO EN FASE 0 — VALIDACIÓN (--duracion-estricta). ABORTANDO.")
+            for err in errores_estricto:
+                logger.error(f"  ✗ {err}")
+            sys.exit(1)
     logger.info("  ✓ Proyecto validado correctamente.")
 
     # ═══ FASE 1: NARRACIÓN TTS ══════════════════════════
     logger.info("")
-    logger.info("━━━ FASE 1: Generando narración con Edge TTS ━━━")
+    motor = datos.get("narrador", {}).get("motor", "edge-tts")
+    logger.info(f"━━━ FASE 1: Generando narración ({motor}) ━━━")
 
     if args.skip_tts:
         logger.info("  ⏭ --skip-tts: usando narraciones existentes.")
@@ -170,6 +191,11 @@ async def orquestador(ruta_proyecto: str, args):
             for err in res_nar.get("errores", []):
                 logger.error(f"  ✗ {err}")
             sys.exit(1)
+
+    if args.solo_narracion:
+        logger.info("")
+        logger.info("  --solo-narracion: duraciones en output/narracion_duraciones.json. Sin montaje.")
+        return
 
     # ═══ FASE 2: MEZCLA DE AUDIO ════════════════════════
     logger.info("")

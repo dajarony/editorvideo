@@ -37,6 +37,28 @@ TRANSICIONES_VALIDAS = {
     "cut", "fade_from_black", "fade_to_black", "dip_to_black", "crossfade"
 }
 
+MOTORES_NARRACION = {"edge-tts", "sintetico"}
+
+
+def errores_duracion_estricta(datos: dict) -> list:
+    """Errores del modo duración estricta: solo se admiten cortes secos.
+
+    Un fundido solaparía escenas o alteraría sus fotogramas, y la duración total dejaría de ser
+    la suma exacta de las escenas que ya se renderizaron a medida.
+    """
+    errores = []
+    for escena in datos.get("escenas", []):
+        if not isinstance(escena, dict):
+            continue
+        for campo in ("transicion_entrada", "transicion_salida"):
+            transicion = escena.get(campo, "cut")
+            if isinstance(transicion, str) and transicion.strip().lower() != "cut":
+                errores.append(
+                    f"Escena '{escena.get('id')}': con montaje.duracion_estricta solo se admite "
+                    f"'{campo}': 'cut' (tiene '{transicion}')."
+                )
+    return errores
+
 
 def _es_numero(valor) -> bool:
     return isinstance(valor, (int, float)) and not isinstance(valor, bool)
@@ -109,8 +131,15 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
                 f"El campo 'narrador' debe ser un objeto JSON, no {type(narrador).__name__}."
             )
         else:
+            motor = narrador.get("motor", "edge-tts")
             voz = narrador.get("voz", "")
-            if not voz:
+            if motor not in MOTORES_NARRACION:
+                errores.append(
+                    f"'narrador.motor' no válido: {motor!r}. Usa 'edge-tts' o 'sintetico' (voz de prueba sin red)."
+                )
+            elif motor == "sintetico":
+                pass  # la voz sintética no usa 'voz'
+            elif not voz:
                 errores.append("El narrador no tiene 'voz' definida.")
             elif voz not in VOCES_EDGE_CONOCIDAS:
                 warnings.append(
@@ -124,6 +153,13 @@ def inicializar_validador(ruta_proyecto: str) -> dict:
                 errores.append(
                     "El campo 'narrador.velocidad' debe tener formato '+0%', '-5%', etc."
                 )
+
+    # ─── Validación del Montaje ─────────────────────────
+    montaje = datos.get("montaje", {})
+    if not isinstance(montaje, dict) or not isinstance(montaje.get("duracion_estricta", False), bool):
+        errores.append("'montaje' debe ser un objeto y 'montaje.duracion_estricta' un booleano.")
+    elif montaje.get("duracion_estricta"):
+        errores.extend(errores_duracion_estricta(datos))
 
     # ─── Validación de Escenas ──────────────────────────
     escenas = datos.get("escenas", [])
