@@ -7,7 +7,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![FFmpeg required](https://img.shields.io/badge/requires-FFmpeg-red)](https://ffmpeg.org/)
-[![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen)](#-tests)
+[![Tests](https://img.shields.io/badge/tests-100%20passed%2C%204%20skipped-brightgreen)](#-tests)
 
 ---
 
@@ -225,13 +225,15 @@ editorvideo/
 ## 🧪 Tests
 
 ```bash
-cd automontaje
-pytest -q
+pip install -e "automontaje[dev]"   # desde la raíz, sin PyTorch
+python -m pytest automontaje/tests -q
 ```
 
 ```
-88 passed
+100 passed, 4 skipped
 ```
+
+Los 4 omitidos llaman al servicio real de Edge TTS y solo se ejecutan con `AEGS_TEST_INTERNET=1`. CI (GitHub Actions) los pasa en Ubuntu con Python 3.12 y 3.13.
 
 ---
 

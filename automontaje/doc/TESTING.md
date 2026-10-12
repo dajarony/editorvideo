@@ -108,7 +108,7 @@ AEGS_TEST_INTERNET=1 python -m pytest automontaje/tests/test_narracion.py -v    
 - Edge TTS genera archivo MP3 real (> 1KB)
 - Velocidad `-5%` funciona
 - Texto largo genera archivo más grande
-- Sin ffprobe falla graciosamente (no crashea)
+- Sin ffprobe no rompe la ejecución (ojo: su aserción solo comprueba que `exito` sea booleano, no qué ocurre; ver la auditoría)
 
 ---
 

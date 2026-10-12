@@ -83,7 +83,7 @@ Esto instala:
 | `audioop-lts` | Compatibilidad con Python 3.13+ |
 | `openai-whisper` | Genera subtítulos automáticos (OPCIONAL) |
 
-> **Nota sobre Whisper**: Es pesado (~1GB con PyTorch). Si NO necesitas subtítulos automáticos, puedes omitirlo: pon `"generar": false` en el JSON y todo funciona sin él.
+> **Nota sobre Whisper**: Es pesado (instala PyTorch, varios GB) y va en el extra opcional `subtitulos`. Si NO necesitas subtítulos automáticos, puedes omitirlo: pon `"generar": false` en el JSON y todo funciona sin él.
 
 ---
 
@@ -94,7 +94,7 @@ cd "C:\ruta\a\editorvideo"
 python -m pytest automontaje/tests -q
 ```
 
-Si ves `53 passed`, todo está correcto.
+Deberías ver `100 passed, 4 skipped`: los 4 omitidos son los que llaman a Edge TTS real y solo se ejecutan con `AEGS_TEST_INTERNET=1`.
 
 ---
 
