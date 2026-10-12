@@ -18,7 +18,7 @@ def pytest_collection_modifyitems(config, items):
         return
     omitir = pytest.mark.skip(reason="necesita red: exporta AEGS_TEST_INTERNET=1 para ejecutarlo")
     for item in items:
-        if "internet" in item.keywords:
+        if item.get_closest_marker("internet"):
             item.add_marker(omitir)
 
 

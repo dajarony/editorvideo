@@ -110,7 +110,7 @@ python -m pytest automontaje/tests -q
 
 ### `RuntimeWarning: Couldn't find ffmpeg or avconv`
 **Causa**: FFmpeg no está en el PATH del sistema.
-**Solución**: Instalar FFmpeg y verificar con `ffmpeg -version`, o indicar los binarios con `AEGS_FFMPEG` y `AEGS_FFPROBE` (rutas completas). Todo AEGS, pydub incluido, usa esas rutas si están definidas.
+**Solución**: Instalar FFmpeg y verificar con `ffmpeg -version`, o indicar los binarios con `AEGS_FFMPEG` y `AEGS_FFPROBE`. Una ruta relativa se resuelve contra la carpeta desde la que lanzas AEGS. Todo AEGS, pydub incluido, usa esas rutas si están definidas.
 
 ### `ModuleNotFoundError: No module named 'whisper'`
 **Causa**: Whisper no instalado (es una dependencia pesada).

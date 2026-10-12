@@ -221,7 +221,8 @@ def binario(nombre: str) -> str:
 
     Si la variable de entorno AEGS_FFMPEG / AEGS_FFPROBE está definida, se usa
     esa ruta (por ejemplo, el binario que trae otro proyecto); si no, el nombre
-    se busca en el PATH como hasta ahora.
+    se busca en el PATH como hasta ahora. Una ruta relativa se resuelve contra el
+    directorio desde el que se lanza AEGS y se devuelve absoluta.
 
     Raises:
         ValueError: si el nombre no es ffmpeg ni ffprobe.
@@ -235,7 +236,9 @@ def binario(nombre: str) -> str:
         return nombre
     if not os.path.isfile(ruta):
         raise FileNotFoundError(f"{variable} apunta a '{ruta}', que no existe")
-    return ruta
+    # Absoluta: varias llamadas ejecutan ffmpeg con otro directorio de trabajo (cwd), y en
+    # Linux/macOS una ruta relativa se buscaría desde ese directorio.
+    return os.path.abspath(ruta)
 
 
 def preparar_pydub() -> None:
@@ -271,6 +274,9 @@ def verificar_ffmpeg() -> dict:
             errores.append(str(e))
             continue
         ruta = shutil.which(ejecutable)
+        if ruta is None and os.path.isfile(ejecutable):
+            errores.append(f"{_VARIABLES_BINARIO[nombre]} apunta a '{ejecutable}', que existe pero no es ejecutable")
+            continue
         if ruta is None:
             errores.append(
                 f"'{nombre}' no encontrado en PATH ni en {_VARIABLES_BINARIO[nombre]}. "

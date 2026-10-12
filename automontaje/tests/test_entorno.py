@@ -55,6 +55,7 @@ class TestTestsDeInternet:
              f"--basetemp={tmp_path / 'pt'}"],
             cwd=RAIZ, env=entorno, capture_output=True, text=True,
         )
+        assert res.returncode in (0, 5), res.stdout + res.stderr  # 5 = ningún test sin la marca
         assert "test_genera_audio_sin_ffprobe_falla_graciosamente" not in res.stdout, res.stdout
 
 
@@ -70,6 +71,31 @@ class TestBinariosFFmpeg:
         monkeypatch.setenv("AEGS_FFPROBE", sys.executable)
         assert utilidades.binario("ffmpeg") == sys.executable
         assert utilidades.binario("ffprobe") == sys.executable
+
+    def test_ruta_relativa_se_devuelve_absoluta(self, monkeypatch, tmp_path):
+        (tmp_path / "ffmpeg-local").write_bytes(b"")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("AEGS_FFMPEG", "ffmpeg-local")
+        assert utilidades.binario("ffmpeg") == str(tmp_path / "ffmpeg-local")
+
+    def test_ruta_relativa_funciona_aunque_ffmpeg_corra_en_otra_carpeta(self, monkeypatch, tmp_path):
+        from modulos import montador_video
+        (tmp_path / "herramientas").mkdir()
+        (tmp_path / "herramientas" / "ffmpeg").write_bytes(b"")
+        proyecto = tmp_path / "proyecto"
+        (proyecto / montador_video.CARPETA_TEMP).mkdir(parents=True)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("AEGS_FFMPEG", os.path.join("herramientas", "ffmpeg"))
+        vistos = []
+
+        def falso_run(comando, **kwargs):
+            base = kwargs.get("cwd") or os.getcwd()
+            vistos.append(os.path.isfile(os.path.join(base, comando[0])))
+            return subprocess.CompletedProcess(comando, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(montador_video.subprocess, "run", falso_run)
+        montador_video._ensamblar_concat_demuxer(str(proyecto), [])
+        assert vistos == [True]
 
     def test_ruta_inexistente_da_error_claro(self, monkeypatch, tmp_path):
         monkeypatch.setenv("AEGS_FFMPEG", str(tmp_path / "no-existe"))

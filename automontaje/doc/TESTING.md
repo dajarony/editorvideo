@@ -35,14 +35,14 @@ AEGS_TEST_INTERNET=1 python -m pytest automontaje/tests/test_narracion.py -v    
 | `test_contrato_edicion.py` | 7 | Contratos de edición | Ninguna |
 | `test_editor_comandos.py` | 10 | Editor por comandos | Ninguna |
 | `test_mejoras.py` | 5 | Mejoras | Ninguna |
-| `test_entorno.py` | 14 | Dependencias, FFmpeg configurable, Whisper opcional, tests de internet | Ninguna |
-| **Total** | **102** | | |
+| `test_entorno.py` | 16 | Dependencias, FFmpeg configurable, Whisper opcional, tests de internet | Ninguna |
+| **Total** | **104** | | |
 
 ---
 
 ## Qué Se Testea
 
-### Utilidades (7 tests)
+### Utilidades (14 tests; algunos ejemplos)
 - Logger se crea con nivel DEBUG
 - Handler de consola presente
 - FileHandler crea directorio y archivo
@@ -51,7 +51,7 @@ AEGS_TEST_INTERNET=1 python -m pytest automontaje/tests/test_narracion.py -v    
 - Limpieza de carpeta existente funciona
 - Limpieza de carpeta inexistente no falla
 
-### Validador (12 tests)
+### Validador (17 tests; algunos ejemplos)
 - Sin `proyecto.json` → error
 - JSON con sintaxis inválida → error
 - Campos obligatorios faltantes → error
@@ -86,7 +86,7 @@ AEGS_TEST_INTERNET=1 python -m pytest automontaje/tests/test_narracion.py -v    
 - `crossfade` → fades cortos
 - `cut` → sin fades
 
-### Subtítulos (7 tests)
+### Subtítulos (8 tests; algunos ejemplos)
 - Conversión de 0.0s → `00:00:00,000`
 - Conversión con milisegundos
 - Conversión con minutos
@@ -94,7 +94,17 @@ AEGS_TEST_INTERNET=1 python -m pytest automontaje/tests/test_narracion.py -v    
 - Valores típicos de subtítulos
 - Precisión al milisegundo
 
-### Narración TTS (4 tests)
+### Entorno (16 tests, `test_entorno.py`)
+- `openai-whisper` no es dependencia obligatoria y está en el extra `subtitulos`; `pytest` en `dev`
+- Sin `AEGS_TEST_INTERNET` se omiten los 4 tests de Edge TTS y ninguno queda sin la marca `internet`
+- `binario()`: sin variables usa el PATH; `AEGS_FFMPEG`/`AEGS_FFPROBE` tienen prioridad y se devuelven como ruta absoluta; ruta inexistente o nombre desconocido dan error claro
+- Una ruta relativa sigue funcionando aunque ffmpeg se ejecute en otra carpeta (`cwd`)
+- `obtener_info_media` usa la variable y, si está mal, devuelve su error en vez de lanzar una excepción
+- Ningún módulo ni `main.py` llama a ffmpeg/ffprobe sin pasar por `binario()`
+- pydub usa las variables solo si están definidas; sin ellas no cambia nada
+- Sin Whisper, los subtítulos fallan con `pip install "automontaje[subtitulos]"` en el mensaje
+
+### Narración TTS (4 tests, todos con red: `AEGS_TEST_INTERNET=1`)
 - Edge TTS genera archivo MP3 real (> 1KB)
 - Velocidad `-5%` funciona
 - Texto largo genera archivo más grande

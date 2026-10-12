@@ -90,8 +90,8 @@ Esto instala:
 ### Paso 4: Verificar que Todo Funciona
 
 ```powershell
-cd "C:\ruta\a\editorvideo\automontaje"
-python -m pytest tests/ -v
+cd "C:\ruta\a\editorvideo"
+python -m pytest automontaje/tests -q
 ```
 
 Si ves `53 passed`, todo está correcto.
