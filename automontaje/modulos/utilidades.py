@@ -156,8 +156,14 @@ def obtener_info_media(ruta_archivo: str) -> dict:
     if not os.path.exists(ruta_archivo):
         return {"error": f"Archivo no encontrado: {ruta_archivo}"}
 
+    try:
+        ejecutable = binario("ffprobe")
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        return {"error": str(e)}
+
     comando = [
-        binario("ffprobe"),
+        ejecutable,
         "-v", "error",
         "-print_format", "json",
         "-show_format",
@@ -233,13 +239,18 @@ def binario(nombre: str) -> str:
 
 
 def preparar_pydub() -> None:
-    """Hace que pydub use los mismos binarios que el resto del automontaje."""
+    """Hace que pydub use los binarios de AEGS_FFMPEG / AEGS_FFPROBE si están definidas.
+
+    Sin esas variables no toca nada: pydub sigue buscando ffmpeg (o avconv) como siempre.
+    """
     from pydub import AudioSegment
     import pydub.utils
 
-    AudioSegment.converter = binario("ffmpeg")
-    # pydub busca ffprobe con pydub.utils.get_prober_name() en cada lectura de un archivo.
-    pydub.utils.get_prober_name = lambda: binario("ffprobe")
+    if os.environ.get("AEGS_FFMPEG"):
+        AudioSegment.converter = binario("ffmpeg")
+    if os.environ.get("AEGS_FFPROBE"):
+        # pydub busca ffprobe con pydub.utils.get_prober_name() en cada lectura de un archivo.
+        pydub.utils.get_prober_name = lambda: binario("ffprobe")
 
 
 # ─── Verificación de Dependencias Externas ──────────────

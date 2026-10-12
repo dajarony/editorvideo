@@ -3,16 +3,21 @@
 ## Ejecutar Tests
 
 ```bash
-cd automontaje
-python -m pytest tests/ -v
+# Desde la raíz del repositorio
+python -m pytest automontaje/tests -q
+
+# Incluir los tests que llaman al servicio real de Edge TTS (necesitan red)
+AEGS_TEST_INTERNET=1 python -m pytest automontaje/tests -q
 ```
+
+Sin `AEGS_TEST_INTERNET=1`, los tests marcados `internet` aparecen como omitidos con su motivo. CI (`.github/workflows/ci.yml`) ejecuta la suite en Ubuntu con Python 3.12 y 3.13 sin esos tests.
 
 ### Solo un módulo específico
 
 ```bash
-python -m pytest tests/test_validador.py -v
-python -m pytest tests/test_montador.py -v
-python -m pytest tests/test_narracion.py -v     # Requiere internet
+python -m pytest automontaje/tests/test_validador.py -v
+python -m pytest automontaje/tests/test_montador.py -v
+AEGS_TEST_INTERNET=1 python -m pytest automontaje/tests/test_narracion.py -v     # Requiere internet
 ```
 
 ---
@@ -21,13 +26,17 @@ python -m pytest tests/test_narracion.py -v     # Requiere internet
 
 | Archivo | Tests | Módulo | Dependencias Externas |
 |---------|-------|--------|----------------------|
-| `test_utilidades.py` | 7 | Utilidades | Ninguna |
-| `test_validador.py` | 12 | Módulo 0 | Ninguna |
+| `test_utilidades.py` | 14 | Utilidades | Ninguna |
+| `test_validador.py` | 17 | Módulo 0 | Ninguna |
 | `test_configuracion_y_audio.py` | 12 | Config + Módulo 2 | PyDub |
 | `test_montador.py` | 11 | Módulo 3 | Ninguna |
-| `test_subtitulos.py` | 7 | Módulo 4 | Ninguna |
-| `test_narracion.py` | 4 | Módulo 1 | Internet + Edge TTS |
-| **Total** | **53** | | |
+| `test_subtitulos.py` | 8 | Módulo 4 | Ninguna |
+| `test_narracion.py` | 4 | Módulo 1 | Los 4 llaman a Edge TTS real: solo con `AEGS_TEST_INTERNET=1` |
+| `test_contrato_edicion.py` | 7 | Contratos de edición | Ninguna |
+| `test_editor_comandos.py` | 10 | Editor por comandos | Ninguna |
+| `test_mejoras.py` | 5 | Mejoras | Ninguna |
+| `test_entorno.py` | 14 | Dependencias, FFmpeg configurable, Whisper opcional, tests de internet | Ninguna |
+| **Total** | **102** | | |
 
 ---
 

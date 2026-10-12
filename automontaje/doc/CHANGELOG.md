@@ -4,6 +4,18 @@ Historial de cambios, bugs corregidos y decisiones técnicas.
 
 ---
 
+## Sin publicar — integración con Aura Motion Studio (F1)
+
+Auditoría completa en [`AUDITORIA_2026-10.md`](AUDITORIA_2026-10.md).
+
+- **Instalable como paquete:** `pyproject.toml` declara `py-modules` y `packages`; antes `pip install -e automontaje` fallaba siempre.
+- **Whisper opcional:** pasa al extra `subtitulos`; la instalación mínima ya no arrastra PyTorch. Sin él, los subtítulos fallan con un mensaje que dice cómo instalarlo.
+- **Tests sin red:** los 4 que llaman a Edge TTS real llevan la marca `internet` y solo corren con `AEGS_TEST_INTERNET=1` (uno de ellos no estaba documentado como de red y pasaba siempre porque su aserción no comprobaba nada).
+- **FFmpeg configurable:** `AEGS_FFMPEG` y `AEGS_FFPROBE`; todas las llamadas pasan por `utilidades.binario()`, y pydub las usa solo si están definidas. Una ruta mala da un error claro, no una excepción.
+- **CI:** GitHub Actions en Ubuntu con Python 3.12 y 3.13.
+
+---
+
 ## v0.2.0 — 2026-04-29 (Hardening + Caché + xfade real)
 
 ### Auditoría completa del sistema → 10 bugs/mejoras identificados y resueltos

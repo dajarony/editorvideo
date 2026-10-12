@@ -2,9 +2,9 @@
 """Tests — Entorno reproducible: dependencias, tests de internet, FFmpeg configurable y Whisper opcional."""
 import json
 import os
+import re
 import subprocess
 import sys
-import tomllib
 
 import pytest
 
@@ -16,6 +16,7 @@ RAIZ = os.path.join(os.path.dirname(__file__), "..")
 
 
 def _pyproject():
+    tomllib = pytest.importorskip("tomllib")  # Python 3.11+; en 3.10 solo se omiten estos tests
     with open(os.path.join(RAIZ, "pyproject.toml"), "rb") as f:
         return tomllib.load(f)
 
@@ -42,8 +43,19 @@ class TestTestsDeInternet:
             cwd=RAIZ, env=entorno, capture_output=True, text=True,
         )
         assert res.returncode == 0, res.stdout + res.stderr
-        assert "3 skipped" in res.stdout
+        assert "4 skipped" in res.stdout
         assert "AEGS_TEST_INTERNET" in res.stdout
+
+    def test_ningun_test_de_narracion_sin_marca_llama_a_edge_tts(self, tmp_path):
+        """generar_audio_escena llama a edge_tts.Communicate(...).save() sin mock: es Edge TTS real."""
+        entorno = {k: v for k, v in os.environ.items() if k != "AEGS_TEST_INTERNET"}
+        res = subprocess.run(
+            [sys.executable, "-m", "pytest", os.path.join(RAIZ, "tests", "test_narracion.py"),
+             "--collect-only", "-q", "-m", "not internet", "-p", "no:cacheprovider",
+             f"--basetemp={tmp_path / 'pt'}"],
+            cwd=RAIZ, env=entorno, capture_output=True, text=True,
+        )
+        assert "test_genera_audio_sin_ffprobe_falla_graciosamente" not in res.stdout, res.stdout
 
 
 class TestBinariosFFmpeg:
@@ -83,14 +95,24 @@ class TestBinariosFFmpeg:
         assert llamadas[0][0] == sys.executable
 
     def test_ningun_modulo_llama_a_ffmpeg_por_nombre(self):
-        """Todas las llamadas pasan por utilidades.binario()."""
-        for nombre in os.listdir(os.path.join(RAIZ, "modulos")):
-            if not nombre.endswith(".py") or nombre == "utilidades.py":
-                continue
-            with open(os.path.join(RAIZ, "modulos", nombre), encoding="utf-8") as f:
-                codigo = f.read()
-            for literal in ('"ffmpeg",', '"ffprobe",', "['ffmpeg',", "['ffprobe',"):
-                assert literal not in codigo, f"{nombre} llama a {literal} sin utilidades.binario()"
+        """Todas las llamadas pasan por utilidades.binario(): ningún 'ffmpeg'/'ffprobe' como
+        elemento de una lista de comando ni como argumento de shutil.which()."""
+        patron = re.compile(r"""(?:[\[,]\s*|which\(\s*)["'](?:ffmpeg|ffprobe)["']""")
+        archivos = [os.path.join(RAIZ, "modulos", n) for n in os.listdir(os.path.join(RAIZ, "modulos"))
+                    if n.endswith(".py") and n != "utilidades.py"] + [os.path.join(RAIZ, "main.py")]
+        for archivo in archivos:
+            with open(archivo, encoding="utf-8") as f:
+                codigo = re.sub(r"""binario\(["'](?:ffmpeg|ffprobe)["']\)""", "", f.read())
+            encontrados = patron.findall(codigo)
+            assert not encontrados, f"{os.path.basename(archivo)} llama a ffmpeg/ffprobe sin binario(): {encontrados}"
+
+    def test_info_media_con_ruta_mala_devuelve_error(self, monkeypatch, tmp_path):
+        """Con AEGS_FFPROBE mal configurada, obtener_info_media devuelve su dict de error, no una excepción."""
+        archivo = tmp_path / "x.mp4"
+        archivo.write_bytes(b"0")
+        monkeypatch.setenv("AEGS_FFPROBE", str(tmp_path / "no-existe"))
+        resultado = utilidades.obtener_info_media(str(archivo))
+        assert "AEGS_FFPROBE" in resultado["error"]
 
     def test_pydub_usa_los_mismos_binarios(self, monkeypatch):
         import pydub.utils
@@ -103,6 +125,17 @@ class TestBinariosFFmpeg:
         utilidades.preparar_pydub()
         assert AudioSegment.converter == sys.executable
         assert pydub.utils.get_prober_name() == sys.executable
+
+    def test_pydub_sin_variables_no_cambia(self, monkeypatch):
+        """Sin AEGS_FFMPEG/AEGS_FFPROBE, la mezcla sigue igual que antes."""
+        import pydub.utils
+        from pydub import AudioSegment
+
+        monkeypatch.delenv("AEGS_FFMPEG", raising=False)
+        monkeypatch.delenv("AEGS_FFPROBE", raising=False)
+        antes = (AudioSegment.converter, pydub.utils.get_prober_name)
+        utilidades.preparar_pydub()
+        assert (AudioSegment.converter, pydub.utils.get_prober_name) == antes
 
 
 class TestWhisperOpcional:

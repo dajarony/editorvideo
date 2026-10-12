@@ -69,8 +69,10 @@ Si ves la versión, está listo. Si dice "no reconocido", necesitas reiniciar la
 Abre PowerShell y navega a la carpeta del sistema:
 
 ```powershell
-cd "C:\ruta\a\editorvideo\automontaje"
-pip install -r requirements.txt
+cd "C:\ruta\a\editorvideo"
+pip install -e "automontaje[dev]"
+# Opcional, solo para subtítulos automáticos (instala PyTorch, varios GB):
+pip install -e "automontaje[subtitulos]"
 ```
 
 Esto instala:
@@ -327,7 +329,7 @@ mi_proyecto/
 → Ejecuta: `pip install audioop-lts` (solo Python 3.13+)
 
 ### "ModuleNotFoundError: No module named 'whisper'"
-→ Ejecuta: `pip install openai-whisper`
+→ Ejecuta: `pip install -e "automontaje[subtitulos]"` (es opcional y pesado)
 → O desactiva subtítulos: `"generar": false` en el JSON
 
 ### "El vídeo se congela en una escena"

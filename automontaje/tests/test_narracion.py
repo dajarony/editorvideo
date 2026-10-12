@@ -60,8 +60,9 @@ class TestEdgeTTSDirecto:
         assert os.path.getsize(ruta) > 5000
 
 
+@pytest.mark.internet
 class TestNarracionModulo:
-    """Tests del módulo narración con mock de ffprobe."""
+    """Tests del módulo narración. Llaman a Edge TTS real: necesitan red."""
 
     @pytest.mark.asyncio
     async def test_genera_audio_sin_ffprobe_falla_graciosamente(self, tmp_path):
