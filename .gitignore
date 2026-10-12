@@ -75,3 +75,9 @@ proyecto_ciber/
 proyecto_pliegue/
 test_proyecto/
 video de ciber seguridad/
+
+# AURA Gauntlet: runs y temporales locales
+.gauntlet/runs/
+.gauntlet/tmp/
+.gauntlet/plan.json
+.gauntlet/active.json

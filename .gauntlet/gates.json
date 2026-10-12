@@ -1,0 +1,21 @@
+{
+  "critics": ["gauntlet-logic", "gauntlet-code", "gauntlet-contract"],
+  "breaker": {"same_defect": 5, "no_progress": 3},
+  "gates": [
+    {"id": "tests", "cmd": ["{python}", "-m", "pytest", "automontaje/tests", "-q", "-p", "no:cacheprovider", "--basetemp=.gauntlet/tmp/pytest"], "timeout_s": 900}
+  ],
+  "protected": [
+    "automontaje/tests/test_contrato_edicion.py",
+    "automontaje/tests/test_editor_comandos.py",
+    "automontaje/tests/test_mejoras.py",
+    "automontaje/tests/test_montador.py",
+    "automontaje/tests/test_subtitulos.py",
+    "automontaje/tests/test_utilidades.py",
+    "automontaje/tests/test_validador.py",
+    "automontaje/tests/test_configuracion_y_audio.py",
+    "interfaz.py",
+    "mejorar_video.py",
+    "superresolucion_video.py",
+    "LICENSE"
+  ]
+}
