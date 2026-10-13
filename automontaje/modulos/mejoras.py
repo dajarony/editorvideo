@@ -28,7 +28,7 @@ import shutil
 import subprocess
 import tempfile
 import importlib.util
-from .utilidades import logger
+from .utilidades import binario, logger
 
 
 # ─── Constantes ─────────────────────────────────────────
@@ -67,7 +67,7 @@ ESTILOS_COLOR = {
 
 def _duracion_video(ruta: str) -> float:
     """Devuelve la duración en segundos de un vídeo."""
-    cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", ruta]
+    cmd = [binario("ffprobe"), "-v", "quiet", "-print_format", "json", "-show_format", ruta]
     res = subprocess.run(cmd, capture_output=True, text=True)
     info = json.loads(res.stdout)
     return float(info["format"]["duration"])
@@ -93,7 +93,7 @@ def _brillo_medio(ruta: str) -> float | None:
         "signalstats,metadata=print:key=lavfi.signalstats.YAVG"
     )
     res = subprocess.run(
-        ["ffmpeg", "-i", ruta, "-vf", filtro, "-frames:v", "8", "-f", "null", "-"],
+        [binario("ffmpeg"), "-i", ruta, "-vf", filtro, "-frames:v", "8", "-f", "null", "-"],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
     )
     valores = []
@@ -132,10 +132,10 @@ def _proteger_brillo_original(ruta_referencia: str, ruta_salida: str) -> None:
 
     try:
         if _es_imagen(ruta_salida):
-            cmd = ["ffmpeg", "-y", "-i", ruta_salida, "-vf", filtro, "-q:v", "2", tmp]
+            cmd = [binario("ffmpeg"), "-y", "-i", ruta_salida, "-vf", filtro, "-q:v", "2", tmp]
         else:
             cmd = [
-                "ffmpeg", "-y", "-i", ruta_salida,
+                binario("ffmpeg"), "-y", "-i", ruta_salida,
                 "-map", "0:v:0", "-map", "0:a?",
                 "-vf", filtro,
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
@@ -169,7 +169,7 @@ def cortar_silencios(
         f"stop_threshold={umbral_db}dB"
     )
     _run_ffmpeg([
-        "ffmpeg", "-y", "-i", ruta_entrada,
+        binario("ffmpeg"), "-y", "-i", ruta_entrada,
         "-af", filtro,
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
@@ -232,7 +232,7 @@ def eliminar_muletillas(
 
     expr = "+".join(f"between(t,{i:.3f},{f:.3f})" for i, f in mantener)
     _run_ffmpeg([
-        "ffmpeg", "-y", "-i", ruta_entrada,
+        binario("ffmpeg"), "-y", "-i", ruta_entrada,
         "-vf", f"select='{expr}',setpts=N/FRAME_RATE/TB",
         "-af", f"aselect='{expr}',asetpts=N/SR/TB",
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
@@ -256,7 +256,7 @@ def aplicar_color_grading(
     filtro = ESTILOS_COLOR.get(estilo, ESTILOS_COLOR["natural_claro"])
     logger.info(f"  🎨 Aplicando color grading '{estilo}'...")
     _run_ffmpeg([
-        "ffmpeg", "-y", "-i", ruta_entrada,
+        binario("ffmpeg"), "-y", "-i", ruta_entrada,
         "-vf", filtro,
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
@@ -285,7 +285,7 @@ def anadir_audio_fades(
     )
     logger.info(f"  🔊 Añadiendo audio fades ({int(duracion_fade*1000)}ms)...")
     _run_ffmpeg([
-        "ffmpeg", "-y", "-i", ruta_entrada,
+        binario("ffmpeg"), "-y", "-i", ruta_entrada,
         "-af", filtro,
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
@@ -307,7 +307,7 @@ def convertir_vertical_9_16(ruta_entrada: str, ruta_salida: str) -> str:
         "crop=1080:1920:(iw-1080)/2:(ih-1920)/2,setsar=1"
     )
     _run_ffmpeg([
-        "ffmpeg", "-y", "-i", ruta_entrada,
+        binario("ffmpeg"), "-y", "-i", ruta_entrada,
         "-vf", filtro,
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
@@ -417,7 +417,7 @@ def anadir_subtitulos_automaticos(
     filtro = f"subtitles=_tmp_subs_auto.srt:force_style='{estilo}'"
 
     cmd = [
-        "ffmpeg", "-y", "-i", os.path.abspath(ruta_entrada),
+        binario("ffmpeg"), "-y", "-i", os.path.abspath(ruta_entrada),
         "-vf", filtro,
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
@@ -472,7 +472,7 @@ FILTROS_LIMPIAR_VOZ = {
 def _tiene_audio(ruta: str) -> bool:
     """Indica si el archivo tiene al menos una pista de audio."""
     res = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a",
+        [binario("ffprobe"), "-v", "error", "-select_streams", "a",
          "-show_entries", "stream=codec_type", "-of", "csv=p=0", ruta],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
     )
@@ -490,7 +490,7 @@ def separacion_voz_ia_disponible() -> bool:
 def _extraer_audio_wav(ruta_entrada: str, ruta_audio: str) -> None:
     """Extrae el audio del video a WAV PCM para Demucs."""
     _run_ffmpeg([
-        "ffmpeg", "-y", "-i", ruta_entrada,
+        binario("ffmpeg"), "-y", "-i", ruta_entrada,
         "-vn", "-ac", "2", "-ar", "44100",
         "-c:a", "pcm_s16le",
         ruta_audio
@@ -503,7 +503,7 @@ def _limpiar_audio_wav(ruta_audio: str, ruta_salida: str, nivel: str) -> None:
 
     filtro = FILTROS_LIMPIAR_VOZ.get(nivel, FILTROS_LIMPIAR_VOZ["media"])
     _run_ffmpeg([
-        "ffmpeg", "-y", "-i", ruta_audio,
+        binario("ffmpeg"), "-y", "-i", ruta_audio,
         "-af", filtro,
         "-ac", "2", "-ar", "48000",
         "-c:a", "pcm_s16le",
@@ -514,7 +514,7 @@ def _limpiar_audio_wav(ruta_audio: str, ruta_salida: str, nivel: str) -> None:
 def _unir_video_con_audio(ruta_video: str, ruta_audio: str, ruta_salida: str) -> None:
     """Conserva el video original y sustituye su audio por la voz aislada."""
     _run_ffmpeg([
-        "ffmpeg", "-y", "-i", ruta_video, "-i", ruta_audio,
+        binario("ffmpeg"), "-y", "-i", ruta_video, "-i", ruta_audio,
         "-map", "0:v:0", "-map", "1:a:0",
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
@@ -652,7 +652,7 @@ def limpiar_voz(
     filtro = FILTROS_LIMPIAR_VOZ.get(nivel, FILTROS_LIMPIAR_VOZ["media"])
     logger.info(f"  🔊 Limpiando voz / reduciendo ruido de fondo (nivel={nivel})...")
     _run_ffmpeg([
-        "ffmpeg", "-y", "-i", ruta_entrada,
+        binario("ffmpeg"), "-y", "-i", ruta_entrada,
         "-af", filtro,
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
@@ -711,14 +711,14 @@ def mejorar_imagen_real(
 
     if es_imagen:
         cmd = [
-            "ffmpeg", "-y", "-i", ruta_entrada,
+            binario("ffmpeg"), "-y", "-i", ruta_entrada,
             "-vf", filtro,
             "-q:v", "2",        # maxima calidad JPEG
             ruta_salida
         ]
     else:
         cmd = [
-            "ffmpeg", "-y", "-i", ruta_entrada,
+            binario("ffmpeg"), "-y", "-i", ruta_entrada,
             "-vf", filtro,
             "-c:v", "libx264", "-preset", "slow", "-crf", "18",
             "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",

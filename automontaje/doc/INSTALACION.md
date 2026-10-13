@@ -58,9 +58,14 @@ ffprobe -version  # Debe mostrar la versión
 ## Paso 3: Instalar Dependencias Python
 
 ```bash
-cd automontaje
-pip install -r requirements.txt
+# Desde la raíz del repositorio. Instalación mínima (sin PyTorch):
+pip install -e "automontaje[dev]"
+
+# Opcional, solo para subtítulos automáticos (Whisper arrastra PyTorch, varios GB):
+pip install -e "automontaje[subtitulos]"
 ```
+
+`pip install -r automontaje/requirements.txt` sigue funcionando y tampoco instala Whisper.
 
 ### Dependencias Principales
 
@@ -69,11 +74,11 @@ pip install -r requirements.txt
 | `edge-tts` | Generación de narración (Microsoft Edge TTS) |
 | `pydub` | Manipulación de audio (mezcla, ducking, fades) |
 | `audioop-lts` | Compatibilidad PyDub con Python 3.13+ |
-| `openai-whisper` | Transcripción automática para subtítulos |
+| `openai-whisper` | Transcripción para subtítulos. **Opcional**: extra `subtitulos` |
 | `pytest` | Framework de testing |
 | `pytest-asyncio` | Soporte async para tests de TTS |
 
-> **Nota sobre Whisper**: La primera ejecución descargará el modelo seleccionado (~140MB para `base`). Requiere PyTorch, que se instala automáticamente.
+> **Nota sobre Whisper**: es opcional y solo hace falta para los subtítulos. Instala PyTorch (varios GB) y la primera ejecución descarga el modelo (~140 MB para `base`).
 
 ---
 
@@ -84,12 +89,11 @@ pip install -r requirements.txt
 python -c "
 import edge_tts; print('✓ edge-tts')
 from pydub import AudioSegment; print('✓ pydub')
-import whisper; print('✓ whisper')
 print('¡Todas las dependencias OK!')
 "
 
-# Ejecutar tests
-python -m pytest tests/ -v
+# Ejecutar tests (desde la raíz del repositorio)
+python -m pytest automontaje/tests -q
 ```
 
 ---
@@ -106,8 +110,8 @@ python -m pytest tests/ -v
 
 ### `RuntimeWarning: Couldn't find ffmpeg or avconv`
 **Causa**: FFmpeg no está en el PATH del sistema.
-**Solución**: Instalar FFmpeg y verificar con `ffmpeg -version`.
+**Solución**: Instalar FFmpeg y verificar con `ffmpeg -version`, o indicar los binarios con `AEGS_FFMPEG` y `AEGS_FFPROBE`. Una ruta relativa se resuelve contra la carpeta desde la que lanzas AEGS. Todo AEGS, pydub incluido, usa esas rutas si están definidas.
 
 ### `ModuleNotFoundError: No module named 'whisper'`
 **Causa**: Whisper no instalado (es una dependencia pesada).
-**Solución**: `pip install openai-whisper`
+**Solución**: `pip install -e "automontaje[subtitulos]"` (es opcional y pesado).

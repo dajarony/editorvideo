@@ -34,7 +34,7 @@ from configuracion import (
     ARCHIVO_AUDIO_MEZCLADO,
     FADE_DUCK_MS
 )
-from .utilidades import logger, ruta_segura_proyecto
+from .utilidades import logger, preparar_pydub, ruta_segura_proyecto
 
 
 def lineal_a_db(volumen_lineal: float) -> float:
@@ -69,6 +69,7 @@ def mezclar_audio_proyecto(ruta_proyecto: str, datos_proyecto: dict) -> dict:
         dict con exito (bool), archivo (str) y duracion_ms (int).
     """
     try:
+        preparar_pydub()
         # ─── Cargar Duraciones ──────────────────────────
         ruta_duraciones = os.path.join(ruta_proyecto, CARPETA_OUTPUT, ARCHIVO_DURACIONES)
         if not os.path.exists(ruta_duraciones):

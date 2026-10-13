@@ -14,7 +14,7 @@ import os
 import json
 import subprocess
 
-from .utilidades import logger
+from .utilidades import binario, logger
 
 
 # ─── Helpers ────────────────────────────────────────────
@@ -40,7 +40,7 @@ def _run(cmd: list, descripcion: str, cwd: str = None) -> None:
 def _info_video(ruta: str) -> tuple:
     """Devuelve (duracion, ancho, alto, fps) de un video."""
     res = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json",
+        [binario("ffprobe"), "-v", "quiet", "-print_format", "json",
          "-show_format", "-show_streams", ruta],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
     )
@@ -64,7 +64,7 @@ def _info_video(ruta: str) -> tuple:
 def _tiene_audio(ruta: str) -> bool:
     """Indica si el video tiene pista de audio."""
     res = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a",
+        [binario("ffprobe"), "-v", "error", "-select_streams", "a",
          "-show_entries", "stream=codec_type", "-of", "csv=p=0", ruta],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
     )
@@ -136,7 +136,7 @@ def cortar_fragmento(
             mapa = ["-map", "[v]"]
         cadena = ";".join(partes_v + partes_a + [concat])
 
-    cmd = ["ffmpeg", "-y", "-i", ruta_entrada, "-filter_complex", cadena]
+    cmd = [binario("ffmpeg"), "-y", "-i", ruta_entrada, "-filter_complex", cadena]
     cmd += mapa + ENCODE_VIDEO
     if con_audio:
         cmd += ["-c:a", "aac", "-b:a", "128k", "-ar", "44100"]
@@ -193,7 +193,7 @@ def superponer_texto(
     )
     logger.info(f"  💬 Superponiendo texto en {inicio:.2f}s ({duracion:.1f}s)...")
     con_audio = _tiene_audio(ruta_entrada)
-    cmd = ["ffmpeg", "-y", "-i", os.path.abspath(ruta_entrada),
+    cmd = [binario("ffmpeg"), "-y", "-i", os.path.abspath(ruta_entrada),
            "-vf", filtro] + ENCODE_VIDEO
     cmd += ["-c:a", "copy"] if con_audio else []
     cmd.append(os.path.abspath(ruta_salida))
@@ -245,7 +245,7 @@ def superponer_imagen(
     )
     logger.info(f"  🖼  Superponiendo imagen en {inicio:.2f}s ({duracion:.1f}s)...")
     con_audio = _tiene_audio(ruta_entrada)
-    cmd = ["ffmpeg", "-y", "-i", ruta_entrada, "-i", archivo,
+    cmd = [binario("ffmpeg"), "-y", "-i", ruta_entrada, "-i", archivo,
            "-filter_complex", filtro, "-map", "[v]"]
     if con_audio:
         cmd += ["-map", "0:a"]
@@ -287,7 +287,7 @@ def aplicar_zoom(
     )
     logger.info(f"  🔍 Zoom '{intensidad}' en {inicio:.2f}s ({duracion:.1f}s)...")
     con_audio = _tiene_audio(ruta_entrada)
-    cmd = ["ffmpeg", "-y", "-i", ruta_entrada, "-vf", filtro] + ENCODE_VIDEO
+    cmd = [binario("ffmpeg"), "-y", "-i", ruta_entrada, "-vf", filtro] + ENCODE_VIDEO
     if con_audio:
         cmd += ["-c:a", "copy"]
     cmd.append(ruta_salida)

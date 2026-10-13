@@ -39,10 +39,11 @@ Y genera un vídeo final listo para publicar.
 ## Ejecución Rápida
 
 ```bash
-cd automontaje
-pip install -r requirements.txt
-python main.py /ruta/a/mi_proyecto/
+pip install -e "automontaje[dev]"          # desde la raíz del repositorio
+aegs /ruta/a/mi_proyecto/
 ```
+
+Los subtítulos automáticos necesitan el extra opcional `subtitulos` (Whisper, que instala PyTorch).
 
 ## Stack Tecnológico
 
@@ -52,5 +53,5 @@ python main.py /ruta/a/mi_proyecto/
 | Narración | Edge TTS (Microsoft, gratuito) |
 | Procesamiento de audio | PyDub |
 | Procesamiento de vídeo | FFmpeg / FFprobe |
-| Transcripción | OpenAI Whisper |
+| Transcripción | OpenAI Whisper (opcional, extra `subtitulos`) |
 | Testing | Pytest |

@@ -28,10 +28,13 @@ dependencies = [
     "edge-tts>=6.1.0",
     "pydub>=0.25.1",
     "audioop-lts>=0.2.1; python_version >= '3.13'",
-    "openai-whisper>=20231117",
 ]
 
 [project.optional-dependencies]
+# Whisper arrastra PyTorch (varios GB): solo hace falta para los subtítulos automáticos.
+subtitulos = [
+    "openai-whisper>=20231117",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
@@ -44,6 +47,15 @@ aegs = "main:main_cli"
 Repository = "https://github.com/dajarony/editorvideo"
 Issues = "https://github.com/dajarony/editorvideo/issues"
 
+# Disposición plana: se declara qué se instala (sin esto setuptools encuentra
+# `modulos` y `plantillas` y se niega a construir el paquete).
+[tool.setuptools]
+py-modules = ["main", "configuracion"]
+packages = ["modulos"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "internet: necesita red (Edge TTS real); solo se ejecuta con AEGS_TEST_INTERNET=1",
+]

@@ -159,6 +159,18 @@ No necesitas borrar la carpeta `output/` manualmente. Los temporales (`temp_clip
 
 ---
 
+## 5b. Narración primero (Aura Motion Studio)
+
+Para montar animaciones que no se pueden recortar ni congelar:
+
+1. `aegs <proyecto> --solo-narracion` — valida, genera la voz y escribe `output/narracion_duraciones.json` sin montar nada. Los clips **todavía no tienen que existir**: si falta uno solo sale un aviso. No se combina con `--skip-tts`.
+2. Renderiza cada clip a la duración de su escena. Las escenas se colocan en fila sobre una rejilla de fotogramas: si la escena va de `inicio` a `fin` segundos (sumando `pausa_antes_seg + duracion_real_seg + pausa_despues_seg` de las anteriores), necesita `round(fin × fps) − round(inicio × fps)` fotogramas, redondeando .5 hacia arriba (como `Math.round` de JavaScript). Así el redondeo no se acumula y el vídeo final queda a menos de medio fotograma de la narración, tenga las escenas que tenga. Lo que cuenta es la **pista de vídeo** del clip: una pista de audio más larga no lo hace válido.
+3. `aegs <proyecto> --skip-tts --duracion-estricta` — monta; si algún clip no encaja (±1 fotograma), o una escena no tiene narración medida, falla y dice qué escena y qué duraciones. Solo se admiten transiciones `cut`. En modo estricto, en cuanto se lee el proyecto (fase 0) se borra el vídeo final de una ejecución anterior, así que si falla la validación, la narración o el montaje no queda ningún `video_final.mp4`.
+
+Para CI o pruebas sin red, usa `"narrador": {"motor": "sintetico"}`: una voz de prueba determinista (tonos, no habla) cuya duración crece con la longitud del texto.
+
+---
+
 ## 6. Voces Disponibles
 
 El sistema usa Microsoft Edge TTS. Algunas voces populares:

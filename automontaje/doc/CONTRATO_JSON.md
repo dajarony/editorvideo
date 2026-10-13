@@ -39,8 +39,8 @@ El archivo `proyecto.json` es la **única interfaz** del sistema. Define qué cl
 
 | Campo | Tipo | Obligatorio | Default | Descripción |
 |-------|------|-------------|---------|-------------|
-| `motor` | string | ❌ | `edge-tts` | Motor TTS (solo `edge-tts` soportado) |
-| `voz` | string | ✅ | — | Nombre de la voz Edge TTS |
+| `motor` | string | ❌ | `edge-tts` | `edge-tts` (voz real, necesita red) o `sintetico` (voz de **prueba** sin red: un tono por palabra, determinista, cuya duración crece con cada carácter del texto; para CI y para medir tiempos, no para publicar) |
+| `voz` | string | ✅ con `edge-tts` | — | Nombre de la voz Edge TTS (no se usa con `sintetico`) |
 | `velocidad` | string | ❌ | `+0%` | Ajuste de velocidad (`-5%`, `+10%`, etc.) |
 | `volumen` | string | ❌ | `+0%` | Ajuste de volumen |
 
@@ -119,6 +119,8 @@ duracion_escena = pausa_antes + duracion_narracion + pausa_despues
 
 Si el clip es más corto que la duración necesaria, el sistema congela el último frame. Si es más largo, lo recorta.
 
+Con `montaje.duracion_estricta` (o `--duracion-estricta`) no hace ninguna de las dos cosas: si un clip no dura lo que su escena (±1 fotograma), el montaje falla con un error que nombra la escena y las dos duraciones. Es el modo de **narración primero** de Aura Motion Studio: se mide la voz (`--solo-narracion`), se renderiza cada animación a esa medida y se monta sin tocarla. Con `--solo-narracion` los clips aún pueden no existir (solo se avisa); en el montaje estricto, una escena sin entrada en `narracion_duraciones.json` también es un error. Cada escena ocupa `round(fin × fps) − round(inicio × fps)` fotogramas de una rejilla acumulada (.5 se redondea hacia arriba), así que el total no deriva aunque haya muchas escenas. Se mide la pista de vídeo del clip, no la del contenedor, y un clip sin pista de vídeo es un error.
+
 ### Transiciones Soportadas
 
 | Valor | Efecto |
@@ -127,6 +129,14 @@ Si el clip es más corto que la duración necesaria, el sistema congela el últi
 | `fade_from_black` | Aparece gradualmente desde negro |
 | `fade_to_black` | Desaparece gradualmente a negro |
 | `crossfade` | Dip-to-black: fade out rápido + fade in rápido |
+
+---
+
+## Objeto `montaje`
+
+| Campo | Tipo | Obligatorio | Default | Descripción |
+|-------|------|-------------|---------|-------------|
+| `duracion_estricta` | boolean | ❌ | `false` | Cada clip debe durar exactamente lo que su escena (±1 fotograma); si no, error en vez de recortar o congelar. Solo admite transiciones `cut`: un fundido solaparía escenas y cambiaría la duración total. |
 
 ---
 

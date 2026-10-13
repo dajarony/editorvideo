@@ -7,7 +7,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![FFmpeg required](https://img.shields.io/badge/requires-FFmpeg-red)](https://ffmpeg.org/)
-[![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen)](#-tests)
+[![Tests](https://img.shields.io/badge/tests-133%20passed%2C%204%20skipped-brightgreen)](#-tests)
 
 ---
 
@@ -167,6 +167,8 @@ python automontaje/main.py /ruta/a/mi_proyecto/
 | `--no-cache` | Fuerza regenerar todas las voces |
 | `--keep-temp` | Conserva los clips temporales |
 | `--srt-sidecar` | Genera SRT pero no lo quema en el vídeo |
+| `--solo-narracion` | Valida, genera la voz y escribe `output/narracion_duraciones.json`; no monta (los clips aún pueden no existir) |
+| `--duracion-estricta` | Cada clip debe durar lo que su escena (±1 fotograma): si no, falla en vez de recortar o congelar; solo cortes `cut` |
 | `-v, --verbose` | Logging detallado |
 
 ---
@@ -225,13 +227,15 @@ editorvideo/
 ## 🧪 Tests
 
 ```bash
-cd automontaje
-pytest -q
+pip install -e "automontaje[dev]"   # desde la raíz, sin PyTorch
+python -m pytest automontaje/tests -q
 ```
 
 ```
-88 passed
+133 passed, 4 skipped
 ```
+
+Los 4 omitidos llaman al servicio real de Edge TTS y solo se ejecutan con `AEGS_TEST_INTERNET=1`. Sin FFmpeg (ni en el PATH ni en `AEGS_FFMPEG`/`AEGS_FFPROBE`) se omiten además, con su motivo, los 16 casos de integración que montan vídeo de verdad. CI (GitHub Actions) los pasa en Ubuntu con Python 3.12 y 3.13.
 
 ---
 

@@ -33,7 +33,10 @@ from modulos.narracion import ejecutar_narracion_concurrente
 from modulos.mezclador_audio import mezclar_audio_proyecto
 from modulos.montador_video import montar_video_proyecto
 from modulos.subtitulos import procesar_subtitulos
-from configuracion import CARPETA_LOGS, ARCHIVO_LOG, CARPETA_NARRACION, CARPETA_TEMP
+from configuracion import (
+    CARPETA_LOGS, ARCHIVO_LOG, CARPETA_NARRACION, CARPETA_TEMP, CARPETA_OUTPUT,
+    ARCHIVO_VIDEO_FINAL, ARCHIVO_VIDEO_SUB, MOTOR_NARRACION_DEFAULT
+)
 
 
 def parse_args(argv=None):
@@ -78,10 +81,27 @@ def parse_args(argv=None):
         help="Genera SRT pero NO lo quema en el vídeo (modo sidecar)."
     )
     parser.add_argument(
+        "--solo-narracion", action="store_true",
+        help=(
+            "Valida y genera la narración (narracion_duraciones.json) y se detiene, sin montar "
+            "vídeo. Los clips aún pueden no existir."
+        ),
+    )
+    parser.add_argument(
+        "--duracion-estricta", action="store_true",
+        help=(
+            "Cada clip debe durar lo que su escena (±1 fotograma): si no, falla en vez de "
+            "recortarlo o congelarlo. Solo admite transiciones 'cut'."
+        ),
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true",
         help="Logging detallado en consola."
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.solo_narracion and args.skip_tts:
+        parser.error("--solo-narracion genera la narración: no se puede combinar con --skip-tts.")
+    return args
 
 
 def mostrar_resumen(ruta_video, timeline, warnings, tiempo_total, srt=None):
@@ -109,6 +129,8 @@ def aplicar_overrides_cli(datos: dict, args) -> dict:
         datos.setdefault("subtitulos", {})["generar"] = False
     if args.srt_sidecar:
         datos.setdefault("subtitulos", {})["sidecar"] = True
+    if args.duracion_estricta:
+        datos.setdefault("montaje", {})["duracion_estricta"] = True
     return datos
 
 
@@ -132,11 +154,24 @@ async def orquestador(ruta_proyecto: str, args):
     # ═══ FASE 0: VALIDACIÓN ═════════════════════════════
     logger.info("")
     logger.info("━━━ FASE 0: Verificando integridad del proyecto ━━━")
-    res_val = inicializar_validador(ruta_proyecto)
+    res_val = inicializar_validador(
+        ruta_proyecto,
+        requiere_clips=not args.solo_narracion,
+        duracion_estricta=args.duracion_estricta,
+    )
 
     warnings_proyecto = res_val.get("warnings", [])
     for warn in warnings_proyecto:
         logger.warning(f"  ⚠ {warn}")
+
+    montaje = res_val.get("datos", {}).get("montaje")
+    if args.duracion_estricta or (isinstance(montaje, dict) and montaje.get("duracion_estricta") is True):
+        # Si esta ejecución falla en cualquier fase, no debe quedar a la vista el vídeo de una anterior.
+        for nombre in (ARCHIVO_VIDEO_FINAL, ARCHIVO_VIDEO_SUB):
+            ruta_previa = os.path.join(ruta_proyecto, CARPETA_OUTPUT, nombre)
+            if os.path.isfile(ruta_previa):
+                os.remove(ruta_previa)
+                logger.info(f"  Duración estricta: eliminado {nombre} de una ejecución anterior.")
 
     if not res_val.get("exito"):
         logger.error("FALLO EN FASE 0 — VALIDACIÓN. ABORTANDO.")
@@ -149,7 +184,8 @@ async def orquestador(ruta_proyecto: str, args):
 
     # ═══ FASE 1: NARRACIÓN TTS ══════════════════════════
     logger.info("")
-    logger.info("━━━ FASE 1: Generando narración con Edge TTS ━━━")
+    motor = datos.get("narrador", {}).get("motor", MOTOR_NARRACION_DEFAULT)
+    logger.info(f"━━━ FASE 1: Generando narración ({motor}) ━━━")
 
     if args.skip_tts:
         logger.info("  ⏭ --skip-tts: usando narraciones existentes.")
@@ -170,6 +206,11 @@ async def orquestador(ruta_proyecto: str, args):
             for err in res_nar.get("errores", []):
                 logger.error(f"  ✗ {err}")
             sys.exit(1)
+
+    if args.solo_narracion:
+        logger.info("")
+        logger.info("  --solo-narracion: duraciones en output/narracion_duraciones.json. Sin montaje.")
+        return
 
     # ═══ FASE 2: MEZCLA DE AUDIO ════════════════════════
     logger.info("")

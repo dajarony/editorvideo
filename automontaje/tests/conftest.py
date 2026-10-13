@@ -12,6 +12,16 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
+def pytest_collection_modifyitems(config, items):
+    """Los tests marcados `internet` (Edge TTS real) solo corren con AEGS_TEST_INTERNET=1."""
+    if os.environ.get("AEGS_TEST_INTERNET") == "1":
+        return
+    omitir = pytest.mark.skip(reason="necesita red: exporta AEGS_TEST_INTERNET=1 para ejecutarlo")
+    for item in items:
+        if item.get_closest_marker("internet"):
+            item.add_marker(omitir)
+
+
 @pytest.fixture
 def proyecto_temp(tmp_path):
     """Crea un proyecto temporal con estructura completa para testing."""

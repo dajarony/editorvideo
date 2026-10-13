@@ -8,7 +8,8 @@
 edge-tts>=6.1.0
 pydub>=0.25.1
 audioop-lts>=0.2.1        # Requerido por pydub en Python 3.13+
-openai-whisper>=20231117
+# Opcional, solo para subtítulos (arrastra PyTorch, varios GB):
+#   pip install "automontaje[subtitulos]"  o  pip install openai-whisper>=20231117
 
 # Testing
 pytest>=8.0.0

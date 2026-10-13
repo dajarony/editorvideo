@@ -29,6 +29,7 @@ Salidas:
 
 import os
 import json
+import math
 import subprocess
 from configuracion import (
     CARPETA_OUTPUT, CARPETA_TEMP, ARCHIVO_DURACIONES,
@@ -36,6 +37,7 @@ from configuracion import (
     RESOLUCION_DEFAULT, FPS_DEFAULT, FADE_TRANSICION_SEG
 )
 from .utilidades import (
+    binario,
     logger, obtener_info_media, ruta_segura_proyecto, validar_id_escena,
     validar_resolucion, normalizar_fps
 )
@@ -58,6 +60,11 @@ def _normalizar_transicion(valor: str) -> str:
     return (valor or "cut").strip().lower()
 
 
+def _fotograma(segundos: float, fps: int) -> int:
+    """Fotograma de la rejilla en `segundos`, redondeando .5 hacia arriba (como Math.round de JS)."""
+    return math.floor(segundos * fps + 0.5)
+
+
 def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
     """Calcula la duración exacta de cada escena y genera el timeline."""
     ruta_duraciones = os.path.join(ruta_proyecto, CARPETA_OUTPUT, ARCHIVO_DURACIONES)
@@ -69,12 +76,20 @@ def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
 
     timeline = {"duracion_total_seg": 0.0, "escenas": []}
     cursor_seg = 0.0
+    # Con duración estricta, el clip ya viene renderizado a la medida de su escena (Aura Motion Studio).
+    estricta = bool(datos_proyecto.get("montaje", {}).get("duracion_estricta", False))
+    fps = normalizar_fps(datos_proyecto.get("fps", FPS_DEFAULT))
 
     for escena in datos_proyecto.get("escenas", []):
         id_escena = escena["id"]
         if not validar_id_escena(id_escena):
             raise ValueError(f"ID de escena inseguro: {id_escena}")
         if id_escena not in duraciones:
+            if estricta:
+                raise ValueError(
+                    f"Modo duración estricta: la escena '{id_escena}' no está en "
+                    f"{ARCHIVO_DURACIONES}. Genera su narración (sin --skip-tts) antes de montar."
+                )
             logger.warning(f"Escena '{id_escena}' sin audio. Omitida del timeline.")
             continue
 
@@ -86,6 +101,15 @@ def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
         ruta_clip = ruta_segura_proyecto(ruta_proyecto, escena["clip"])
         info_clip = obtener_info_media(ruta_clip)
         duracion_disponible = float(info_clip.get("duracion", 0))
+        if estricta:
+            # La duración del contenedor es la de su pista más larga: un clip con el vídeo corto y
+            # el audio largo la "cumpliría" y se congelaría. Aquí cuenta solo la imagen.
+            if "duracion_video" not in info_clip:
+                raise ValueError(
+                    f"Modo duración estricta: el clip de la escena '{id_escena}' no tiene pista de vídeo "
+                    f"legible ({info_clip.get('error', 'sin pista de vídeo')})."
+                )
+            duracion_disponible = float(info_clip["duracion_video"])
 
         inicio_clip = float(escena.get("clip_inicio_seg", 0))
         fin_clip = escena.get("clip_fin_seg")
@@ -93,6 +117,17 @@ def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
             fin_clip = duracion_disponible
 
         dur_segmento_clip = max(0.0, fin_clip - inicio_clip)
+        if estricta:
+            # Límites sobre una rejilla de fotogramas acumulada: el redondeo de cada escena no se
+            # suma al de las anteriores y el total queda a menos de medio fotograma del audio.
+            fotogramas = _fotograma(cursor_seg + duracion_escena, fps) - _fotograma(cursor_seg, fps)
+            if fotogramas < 1 or abs(dur_segmento_clip - fotogramas / fps) > 1.0 / fps + 1e-6:
+                raise ValueError(
+                    f"Modo duración estricta: la escena '{id_escena}' necesita {fotogramas / fps:.3f} s "
+                    f"({fotogramas} fotogramas) y su clip dura {dur_segmento_clip:.3f} s "
+                    f"(tolerancia ±1 fotograma a {fps} fps). "
+                    "No se recorta ni se congela: vuelve a renderizar el clip a esa duración."
+                )
         clip_recortado = dur_segmento_clip > duracion_escena
         clip_extendido = dur_segmento_clip < duracion_escena
 
@@ -119,6 +154,8 @@ def calcular_timeline(ruta_proyecto: str, datos_proyecto: dict) -> dict:
                 escena.get("transicion_salida", "cut")
             )
         })
+        if estricta:
+            timeline["escenas"][-1]["fotogramas"] = fotogramas
         cursor_seg += duracion_escena
 
     timeline["duracion_total_seg"] = round(cursor_seg, 3)
@@ -141,6 +178,8 @@ def _construir_filtro_video(escena: dict, resolucion: str, fps: int) -> str:
         raise ValueError(f"Resolucion invalida: {resolucion}")
     fps = normalizar_fps(fps)
     dur = escena["duracion_necesaria"]
+    # Duración estricta: como mucho se repite 1 fotograma (la tolerancia), nunca una congelación.
+    relleno = 1.0 / fps if "fotogramas" in escena else max(0, dur)
     fade_seg = FADE_TRANSICION_SEG
     trans_in = escena.get("transicion_entrada", "cut")
     trans_out = escena.get("transicion_salida", "cut")
@@ -151,7 +190,7 @@ def _construir_filtro_video(escena: dict, resolucion: str, fps: int) -> str:
         f"pad={res_x_y}:(ow-iw)/2:(oh-ih)/2:color=black",
         f"setsar=1",
         f"fps={fps}",
-        f"tpad=stop_mode=clone:stop_duration={max(0, dur)}",
+        f"tpad=stop_mode=clone:stop_duration={relleno}",
     ]
 
     # ── Entrada ──
@@ -193,11 +232,16 @@ def procesar_clips_individuales(
         inicio_trim = escena["inicio_trim"]
         vf_filters = _construir_filtro_video(escena, resolucion, fps)
 
+        # Duración estricta: número exacto de fotogramas de la rejilla acumulada (ver calcular_timeline).
+        if "fotogramas" in escena:
+            limite = ["-frames:v", str(escena["fotogramas"])]
+        else:
+            limite = ["-t", str(dur_necesaria)]
         comando = [
-            "ffmpeg", "-y", "-v", "error",
+            binario("ffmpeg"), "-y", "-v", "error",
             "-ss", str(inicio_trim),
             "-i", ruta_origen,
-            "-t", str(dur_necesaria),
+            *limite,
             "-vf", vf_filters,
             "-an",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
@@ -211,6 +255,15 @@ def procesar_clips_individuales(
         if resultado.returncode != 0:
             logger.error(f"FFmpeg error en '{id_escena}': {resultado.stderr}")
             raise RuntimeError(f"FFmpeg falló procesando '{id_escena}'")
+        if "fotogramas" in escena:
+            # Red de seguridad: el segmento debe tener exactamente los fotogramas de su escena.
+            obtenida = float(obtener_info_media(ruta_destino).get("duracion_video", 0))
+            if abs(obtenida - escena["fotogramas"] / fps) > 0.5 / fps:
+                raise ValueError(
+                    f"Modo duración estricta: el segmento de la escena '{id_escena}' salió con "
+                    f"{obtenida:.3f} s y necesita {escena['fotogramas'] / fps:.3f} s "
+                    f"({escena['fotogramas']} fotogramas). No se congela para completarlo."
+                )
 
         archivos_procesados.append(ruta_destino)
 
@@ -240,13 +293,17 @@ def _ensamblar_concat_demuxer(
         for arch in archivos_procesados:
             f.write(f"file '{os.path.basename(arch)}'\n")
 
-    ruta_audio = os.path.join(ruta_proyecto, CARPETA_OUTPUT, ARCHIVO_AUDIO_MEZCLADO)
-    ruta_video_final = os.path.join(ruta_proyecto, CARPETA_OUTPUT, ARCHIVO_VIDEO_FINAL)
+    # Absolutas: FFmpeg se ejecuta con cwd=ruta_temp y una ruta de proyecto relativa fallaría.
+    ruta_audio = os.path.abspath(os.path.join(ruta_proyecto, CARPETA_OUTPUT, ARCHIVO_AUDIO_MEZCLADO))
+    ruta_video_final = os.path.abspath(os.path.join(ruta_proyecto, CARPETA_OUTPUT, ARCHIVO_VIDEO_FINAL))
 
     comando = [
-        "ffmpeg", "-y", "-v", "error",
+        binario("ffmpeg"), "-y", "-v", "error",
         "-f", "concat", "-safe", "0",
-        "-i", lista_concat,
+        # Por nombre, no por ruta: se ejecuta con cwd=ruta_temp. Algunos FFmpeg de Windows buscan
+        # los clips de la lista en la carpeta del último '/' e ignoran '\' (con CARPETA_TEMP =
+        # "output/temp_clips" los buscaban en output/), y tampoco aceptan 'C:/...' como absoluta.
+        "-i", os.path.basename(lista_concat),
         "-i", ruta_audio,
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",
@@ -324,7 +381,7 @@ def _ensamblar_xfade(
     filter_complex = ";".join(partes_filter)
 
     comando = [
-        "ffmpeg", "-y", "-v", "error",
+        binario("ffmpeg"), "-y", "-v", "error",
         *inputs,
         "-filter_complex", filter_complex,
         "-map", "[vout]",

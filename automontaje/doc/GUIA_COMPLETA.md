@@ -69,8 +69,10 @@ Si ves la versión, está listo. Si dice "no reconocido", necesitas reiniciar la
 Abre PowerShell y navega a la carpeta del sistema:
 
 ```powershell
-cd "C:\ruta\a\editorvideo\automontaje"
-pip install -r requirements.txt
+cd "C:\ruta\a\editorvideo"
+pip install -e "automontaje[dev]"
+# Opcional, solo para subtítulos automáticos (instala PyTorch, varios GB):
+pip install -e "automontaje[subtitulos]"
 ```
 
 Esto instala:
@@ -81,18 +83,18 @@ Esto instala:
 | `audioop-lts` | Compatibilidad con Python 3.13+ |
 | `openai-whisper` | Genera subtítulos automáticos (OPCIONAL) |
 
-> **Nota sobre Whisper**: Es pesado (~1GB con PyTorch). Si NO necesitas subtítulos automáticos, puedes omitirlo: pon `"generar": false` en el JSON y todo funciona sin él.
+> **Nota sobre Whisper**: Es pesado (instala PyTorch, varios GB) y va en el extra opcional `subtitulos`. Si NO necesitas subtítulos automáticos, puedes omitirlo: pon `"generar": false` en el JSON y todo funciona sin él.
 
 ---
 
 ### Paso 4: Verificar que Todo Funciona
 
 ```powershell
-cd "C:\ruta\a\editorvideo\automontaje"
-python -m pytest tests/ -v
+cd "C:\ruta\a\editorvideo"
+python -m pytest automontaje/tests -q
 ```
 
-Si ves `53 passed`, todo está correcto.
+Deberías ver `133 passed, 4 skipped`: los 4 omitidos son los que llaman a Edge TTS real y solo se ejecutan con `AEGS_TEST_INTERNET=1`. Sin FFmpeg se omiten además los 16 casos de integración que montan vídeo.
 
 ---
 
@@ -327,7 +329,7 @@ mi_proyecto/
 → Ejecuta: `pip install audioop-lts` (solo Python 3.13+)
 
 ### "ModuleNotFoundError: No module named 'whisper'"
-→ Ejecuta: `pip install openai-whisper`
+→ Ejecuta: `pip install -e "automontaje[subtitulos]"` (es opcional y pesado)
 → O desactiva subtítulos: `"generar": false` en el JSON
 
 ### "El vídeo se congela en una escena"

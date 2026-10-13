@@ -25,8 +25,11 @@ Salidas:
 
 import os
 import json
+import math
 import asyncio
+import struct
 import sys
+import wave
 import edge_tts
 
 # Fix para Windows: aiodns requiere SelectorEventLoop
@@ -48,11 +51,86 @@ from configuracion import (
     CARPETA_NARRACION,
     CARPETA_OUTPUT,
     ARCHIVO_DURACIONES,
-    ARCHIVO_CACHE_TTS
+    ARCHIVO_CACHE_TTS,
+    MOTOR_NARRACION_DEFAULT
 )
 
 
 MAX_CONCURRENCIA_TTS = 4
+
+# Voz sintética: SOLO para pruebas y CI. No es una voz: son tonos, uno por palabra.
+FRECUENCIA_MUESTREO_SINTETICA = 24000
+SEGUNDOS_POR_CARACTER_SINTETICA = 0.065
+SILENCIO_FINAL_SINTETICA_SEG = 0.2
+
+
+def generar_audio_sintetico(texto: str, velocidad: str, ruta_salida: str) -> float:
+    """Genera una narración de PRUEBA, offline y determinista, y devuelve su duración en segundos.
+
+    Escribe un WAV mono de 16 bits con un tono por palabra, proporcional a sus caracteres, y un
+    silencio final fijo. Su duración depende solo de la longitud del texto y de la velocidad
+    ("+10%" = un 10 % más rápida) y crece con cada carácter, así que sirve para medir y montar sin
+    red. No es una narración real.
+
+    Raises:
+        ValueError: si la velocidad no tiene el formato '+0%', '-5%', etc.
+    """
+    if not validar_velocidad_tts(velocidad):
+        raise ValueError(f"Velocidad no válida: {velocidad!r}. Usa '+0%', '-5%', etc.")
+    factor = max(0.25, 1 + int(velocidad.strip().rstrip("%")) / 100)
+    sr = FRECUENCIA_MUESTREO_SINTETICA
+    muestras = []
+    for i, palabra in enumerate(texto.split()):
+        # +1: la pausa entre palabras también cuenta como un carácter.
+        total = int((len(palabra) + 1) * SEGUNDOS_POR_CARACTER_SINTETICA / factor * sr)
+        tono = int(total * 0.75)
+        frecuencia = 180 + 30 * (i % 5)
+        muestras += [int(6000 * math.sin(2 * math.pi * frecuencia * n / sr)) for n in range(tono)]
+        muestras += [0] * (total - tono)
+    muestras += [0] * int(SILENCIO_FINAL_SINTETICA_SEG * sr)
+    with wave.open(ruta_salida, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sr)
+        wav.writeframes(struct.pack(f"<{len(muestras)}h", *muestras))
+    return len(muestras) / sr
+
+
+def _narracion_sintetica(ruta_proyecto: str, datos_proyecto: dict) -> dict:
+    """Fase 1 con el motor sintético: un WAV por escena y narracion_duraciones.json."""
+    ruta_output_narracion = os.path.join(ruta_proyecto, CARPETA_NARRACION)
+    os.makedirs(ruta_output_narracion, exist_ok=True)
+    velocidad = datos_proyecto.get("narrador", {}).get("velocidad", "+0%")
+    duraciones_json, errores = {}, []
+    for escena in datos_proyecto.get("escenas", []):
+        id_escena = escena["id"]
+        if not validar_id_escena(id_escena):
+            errores.append({"id": id_escena, "error": "ID de escena inseguro."})
+            continue
+        ruta_wav = os.path.join(ruta_output_narracion, f"{id_escena}.wav")
+        try:
+            duracion = generar_audio_sintetico(escena["texto_narracion"], velocidad, ruta_wav)
+        except ValueError as e:
+            errores.append({"id": id_escena, "error": str(e)})
+            continue
+        duraciones_json[id_escena] = {
+            "archivo": os.path.relpath(ruta_wav, ruta_proyecto).replace(os.sep, "/"),
+            "duracion_real_seg": duracion,
+        }
+        logger.info(f"  ✓ Narración sintética '{id_escena}' ({duracion:.3f}s)")
+    _guardar_duraciones(ruta_proyecto, duraciones_json)
+    return {"exito": not errores, "errores": errores, "duraciones": duraciones_json}
+
+
+def _guardar_duraciones(ruta_proyecto: str, duraciones_json: dict):
+    """Escribe output/narracion_duraciones.json (el contrato con Aura Motion Studio), si hay datos."""
+    if not duraciones_json:
+        return
+    ruta_json_salida = os.path.join(ruta_proyecto, CARPETA_OUTPUT, ARCHIVO_DURACIONES)
+    os.makedirs(os.path.dirname(ruta_json_salida), exist_ok=True)
+    with open(ruta_json_salida, 'w', encoding='utf-8') as f:
+        json.dump(duraciones_json, f, indent=2, ensure_ascii=False)
+    logger.info(f"Duraciones guardadas en {ARCHIVO_DURACIONES}")
 
 
 def _cargar_cache(ruta_cache: str) -> dict:
@@ -185,6 +263,9 @@ async def ejecutar_narracion_concurrente(
     Returns:
         dict con exito (bool), errores (list) y duraciones (dict).
     """
+    if datos_proyecto.get("narrador", {}).get("motor", MOTOR_NARRACION_DEFAULT) == "sintetico":
+        return _narracion_sintetica(ruta_proyecto, datos_proyecto)
+
     ruta_output_narracion = os.path.join(ruta_proyecto, CARPETA_NARRACION)
     os.makedirs(ruta_output_narracion, exist_ok=True)
 
@@ -271,14 +352,7 @@ async def ejecutar_narracion_concurrente(
                 errores.append(res)
 
     # ── Guardar JSON de duraciones ──
-    if duraciones_json:
-        ruta_json_salida = os.path.join(
-            ruta_proyecto, CARPETA_OUTPUT, ARCHIVO_DURACIONES
-        )
-        os.makedirs(os.path.dirname(ruta_json_salida), exist_ok=True)
-        with open(ruta_json_salida, 'w', encoding='utf-8') as f:
-            json.dump(duraciones_json, f, indent=2, ensure_ascii=False)
-        logger.info(f"Duraciones guardadas en {ARCHIVO_DURACIONES}")
+    _guardar_duraciones(ruta_proyecto, duraciones_json)
 
     # ── Persistir caché ──
     _guardar_cache(ruta_cache, nuevo_cache)

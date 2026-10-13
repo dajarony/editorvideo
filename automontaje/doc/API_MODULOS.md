@@ -21,7 +21,7 @@ Añade un FileHandler al logger para guardar logs en disco.
 ### `obtener_info_media(ruta_archivo) → dict`
 Extrae metadatos de un archivo multimedia usando FFprobe.
 
-**Retorna**: `{"duracion": float, "resolucion": str, "codec": str}` o `{"error": str}`.
+**Retorna**: `{"duracion": float, "resolucion": str, "codec": str}` o `{"error": str}`. Si hay pista de vídeo añade `"duracion_video"`: la de esa pista (la del contenedor, `duracion`, es la de la pista más larga), o la del contenedor si el formato no la da por pista.
 
 ### `limpiar_carpeta_temporal(ruta_proyecto, carpeta_temp)`
 Elimina la carpeta de temporales. No falla si no existe.
@@ -30,8 +30,14 @@ Elimina la carpeta de temporales. No falla si no existe.
 
 ## `validador.py` — Módulo 0
 
-### `inicializar_validador(ruta_proyecto) → dict`
+### `errores_duracion_estricta(datos) → list`
+Errores del modo duración estricta: cualquier `transicion_entrada`/`transicion_salida` distinta de `cut`. Si `escenas` no es una lista devuelve `[]` (ese error lo da `inicializar_validador`). `inicializar_validador` la aplica si `montaje.duracion_estricta` es `true` o si recibe `duracion_estricta=True`.
+
+### `inicializar_validador(ruta_proyecto, requiere_clips=True, duracion_estricta=False) → dict`
 Valida la integridad completa de un proyecto.
+
+- `requiere_clips=False` (lo usa `--solo-narracion`): un clip ausente o ilegible pasa de error a warning, porque en el flujo "narración primero" los clips se renderizan después de medir la voz. Lo demás se valida igual.
+- `duracion_estricta=True` (lo usa `--duracion-estricta`): aplica `errores_duracion_estricta` aunque el JSON no tenga `montaje.duracion_estricta`.
 
 **Validaciones bloqueantes** (errores):
 - `proyecto.json` existe y es JSON válido
@@ -78,8 +84,11 @@ Genera un MP3 de narración para una escena usando la API Python de Edge TTS.
 **Reintentos**: Hasta `REINTENTOS_MAXIMOS_TTS` + 1 intentos.  
 **Verificación**: Post-generación verifica existencia y duración mínima con ffprobe.
 
+### `generar_audio_sintetico(texto, velocidad, ruta_salida) → float`
+Voz de **prueba** offline y determinista: escribe un WAV mono de 16 bits con un tono por palabra, proporcional a sus caracteres (más uno por la pausa), y 0,2 s de silencio final, y devuelve su duración en segundos. La duración depende solo de la longitud del texto y de la velocidad, y crece con cada carácter. Lanza `ValueError` si la velocidad no tiene el formato `+0%`/`-5%`. No usa red ni FFmpeg.
+
 ### `ejecutar_narracion_concurrente(ruta_proyecto, datos_proyecto) → dict` (async)
-Genera todas las narraciones del proyecto en paralelo con `asyncio.gather()`.
+Genera todas las narraciones del proyecto en paralelo con `asyncio.gather()`. Con `narrador.motor = "sintetico"` usa `generar_audio_sintetico` (archivos `.wav`) en lugar de Edge TTS; una velocidad mal formada se devuelve en `errores` por escena, sin excepción. Los dos motores escriben `narracion_duraciones.json` con el mismo formato y en el mismo sitio.
 
 **Retorna**: `{"exito": bool, "errores": list, "duraciones": dict}`
 
@@ -126,6 +135,8 @@ Ensambla la mezcla final de narración + música con ducking suavizado.
 Calcula la duración exacta de cada escena.
 
 **Fórmula**: `duracion_escena = pausa_antes + duracion_narracion + pausa_despues`
+
+Con `montaje.duracion_estricta`, lanza `ValueError` ("Modo duración estricta: …") si el clip no dura lo que la escena (±1 fotograma) en lugar de marcarlo para recortar o congelar, y también si una escena no está en `narracion_duraciones.json` (sin el modo estricto se omite con un aviso). En ese modo cada escena del timeline lleva además `fotogramas = round(fin × fps) − round(inicio × fps)` (rejilla acumulada, .5 hacia arriba), se mide la pista de vídeo del clip (`duracion_video`; sin ella, error) y se compara con `fotogramas / fps`. `procesar_clips_individuales` corta con `-frames:v` en vez de `-t`, rellena como mucho 1 fotograma (`tpad`) y comprueba que cada segmento salga con exactamente sus fotogramas; si no, `ValueError` en vez de congelar.
 
 **Retorna**:
 ```python

@@ -156,8 +156,14 @@ def obtener_info_media(ruta_archivo: str) -> dict:
     if not os.path.exists(ruta_archivo):
         return {"error": f"Archivo no encontrado: {ruta_archivo}"}
 
+    try:
+        ejecutable = binario("ffprobe")
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        return {"error": str(e)}
+
     comando = [
-        "ffprobe",
+        ejecutable,
         "-v", "error",
         "-print_format", "json",
         "-show_format",
@@ -185,6 +191,9 @@ def obtener_info_media(ruta_archivo: str) -> dict:
             if stream.get("codec_type") == "video":
                 info["resolucion"] = f"{stream.get('width', 0)}x{stream.get('height', 0)}"
                 info["codec"] = stream.get("codec_name", "N/A")
+                # La del contenedor es la de la pista más larga; esta es la de la imagen (si el
+                # formato la da por pista, como MP4/MOV; si no, la del contenedor).
+                info["duracion_video"] = float(stream.get("duration") or info["duracion"])
                 break
             elif stream.get("codec_type") == "audio" and info["codec"] == "N/A":
                 info["codec"] = stream.get("codec_name", "N/A")
@@ -205,6 +214,51 @@ def obtener_info_media(ruta_archivo: str) -> dict:
         return {"error": str(e)}
 
 
+# ─── Binarios de FFmpeg ─────────────────────────────────
+
+_VARIABLES_BINARIO = {"ffmpeg": "AEGS_FFMPEG", "ffprobe": "AEGS_FFPROBE"}
+
+
+def binario(nombre: str) -> str:
+    """Ruta del ejecutable de FFmpeg o FFprobe que usa todo el automontaje.
+
+    Si la variable de entorno AEGS_FFMPEG / AEGS_FFPROBE está definida, se usa
+    esa ruta (por ejemplo, el binario que trae otro proyecto); si no, el nombre
+    se busca en el PATH como hasta ahora. Una ruta relativa se resuelve contra el
+    directorio desde el que se lanza AEGS y se devuelve absoluta.
+
+    Raises:
+        ValueError: si el nombre no es ffmpeg ni ffprobe.
+        FileNotFoundError: si la variable apunta a un archivo que no existe.
+    """
+    variable = _VARIABLES_BINARIO.get(nombre)
+    if variable is None:
+        raise ValueError(f"Binario desconocido: {nombre!r} (solo ffmpeg o ffprobe)")
+    ruta = os.environ.get(variable)
+    if not ruta:
+        return nombre
+    if not os.path.isfile(ruta):
+        raise FileNotFoundError(f"{variable} apunta a '{ruta}', que no existe")
+    # Absoluta: varias llamadas ejecutan ffmpeg con otro directorio de trabajo (cwd), y en
+    # Linux/macOS una ruta relativa se buscaría desde ese directorio.
+    return os.path.abspath(ruta)
+
+
+def preparar_pydub() -> None:
+    """Hace que pydub use los binarios de AEGS_FFMPEG / AEGS_FFPROBE si están definidas.
+
+    Sin esas variables no toca nada: pydub sigue buscando ffmpeg (o avconv) como siempre.
+    """
+    from pydub import AudioSegment
+    import pydub.utils
+
+    if os.environ.get("AEGS_FFMPEG"):
+        AudioSegment.converter = binario("ffmpeg")
+    if os.environ.get("AEGS_FFPROBE"):
+        # pydub busca ffprobe con pydub.utils.get_prober_name() en cada lectura de un archivo.
+        pydub.utils.get_prober_name = lambda: binario("ffprobe")
+
+
 # ─── Verificación de Dependencias Externas ──────────────
 
 def verificar_ffmpeg() -> dict:
@@ -216,24 +270,32 @@ def verificar_ffmpeg() -> dict:
     errores = []
     versiones = {}
 
-    for binario in ("ffmpeg", "ffprobe"):
-        ruta = shutil.which(binario)
+    for nombre in ("ffmpeg", "ffprobe"):
+        try:
+            ejecutable = binario(nombre)
+        except FileNotFoundError as e:
+            errores.append(str(e))
+            continue
+        ruta = shutil.which(ejecutable)
+        if ruta is None and os.path.isfile(ejecutable):
+            errores.append(f"{_VARIABLES_BINARIO[nombre]} apunta a '{ejecutable}', que existe pero no es ejecutable")
+            continue
         if ruta is None:
             errores.append(
-                f"'{binario}' no encontrado en PATH. "
+                f"'{nombre}' no encontrado en PATH ni en {_VARIABLES_BINARIO[nombre]}. "
                 f"Instala FFmpeg: https://ffmpeg.org/download.html"
             )
             continue
         try:
             res = subprocess.run(
-                [binario, "-version"],
+                [ruta, "-version"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, check=True, timeout=10
             )
             primera_linea = res.stdout.splitlines()[0] if res.stdout else "desconocida"
-            versiones[binario] = primera_linea
+            versiones[nombre] = primera_linea
         except Exception as e:
-            errores.append(f"Error ejecutando '{binario}': {e}")
+            errores.append(f"Error ejecutando '{nombre}': {e}")
 
     return {"exito": not errores, "errores": errores, "versiones": versiones}
 

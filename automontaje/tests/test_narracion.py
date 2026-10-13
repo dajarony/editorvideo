@@ -16,8 +16,9 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
+@pytest.mark.internet
 class TestEdgeTTSDirecto:
-    """Tests de la API edge-tts directamente (sin ffprobe)."""
+    """Tests de la API edge-tts directamente (sin ffprobe). Necesitan red."""
 
     @pytest.mark.asyncio
     async def test_edge_tts_genera_archivo(self, tmp_path):
@@ -59,8 +60,9 @@ class TestEdgeTTSDirecto:
         assert os.path.getsize(ruta) > 5000
 
 
+@pytest.mark.internet
 class TestNarracionModulo:
-    """Tests del módulo narración con mock de ffprobe."""
+    """Tests del módulo narración. Llaman a Edge TTS real: necesitan red."""
 
     @pytest.mark.asyncio
     async def test_genera_audio_sin_ffprobe_falla_graciosamente(self, tmp_path):
