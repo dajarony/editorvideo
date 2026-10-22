@@ -5,7 +5,7 @@ SUME DOCBLOCK v2.0
 ═══════════════════════════════════════════════════════════
 Archivo: modulos/mejoras.py
 Tipo: Postproducción → Mejoras Automáticas (Módulo 5)
-Dependencias: os, re, json, subprocess, whisper (opcional)
+Dependencias: os, re, json, subprocess, transcripcion (faster-whisper u openai-whisper, opcional)
 
 Entradas:
 - Ruta a cualquier archivo de vídeo .mp4
@@ -262,25 +262,21 @@ def recortar_muletillas(
     """
     duracion_total = _duracion_video(ruta_entrada)
     todo = [(0.0, round(duracion_total, 4))]
-    try:
-        import whisper
-    except ImportError:
-        logger.warning("  ⚠  Whisper no instalado. Omitiendo muletillas.")
+    from .transcripcion import motor_disponible, transcribir
+
+    if motor_disponible() is None:
+        logger.warning("  ⚠  No hay motor de transcripción (faster-whisper u openai-whisper). Omitiendo muletillas.")
         shutil.copy2(ruta_entrada, ruta_salida)
         return ruta_salida, todo
 
     palabras_filler = MULETILLAS.get(idioma, MULETILLAS["es"])
-    logger.info(f"  🎙  Transcribiendo con Whisper para detectar muletillas...")
-
-    modelo = whisper.load_model("base")
-    resultado = modelo.transcribe(ruta_entrada, language=idioma, word_timestamps=True)
+    logger.info(f"  🎙  Transcribiendo para detectar muletillas...")
 
     cortes = []
-    for seg in resultado.get("segments", []):
-        for palabra in seg.get("words", []):
-            texto = palabra["word"].strip().lower().rstrip(".,!?")
-            if texto in palabras_filler:
-                cortes.append((float(palabra["start"]), float(palabra["end"])))
+    for segmento in transcribir(ruta_entrada, idioma, "base", palabras=True):
+        for inicio, fin, palabra in segmento.palabras:
+            if palabra.lower().rstrip(".,!?") in palabras_filler:
+                cortes.append((inicio, fin))
 
     if not cortes:
         logger.info("  ✅ No se detectaron muletillas.")
@@ -425,42 +421,10 @@ def _segundos_a_srt(segundos: float) -> str:
 
 
 def _transcribir_segmentos(ruta: str, idioma: str, modelo_whisper: str) -> list:
-    """Transcribe audio/video y devuelve lista de (inicio, fin, texto).
+    """Transcribe audio/video y devuelve lista de (inicio, fin, texto) con el motor único."""
+    from .transcripcion import transcribir
 
-    Usa faster-whisper si esta disponible (ligero y rapido);
-    si no, recurre a openai-whisper.
-    """
-    # faster-whisper — preferido (ligero, rapido, sin PyTorch)
-    try:
-        from faster_whisper import WhisperModel
-        logger.info(f"  🎙  Transcribiendo con faster-whisper (modelo={modelo_whisper})...")
-        modelo = WhisperModel(modelo_whisper, device="cpu", compute_type="int8")
-        segmentos, _info = modelo.transcribe(ruta, language=idioma)
-        return [
-            (float(s.start), float(s.end), s.text.strip())
-            for s in segmentos if s.text and s.text.strip()
-        ]
-    except ImportError:
-        pass
-
-    # openai-whisper — alternativa
-    try:
-        import whisper
-        logger.info(f"  🎙  Transcribiendo con openai-whisper (modelo={modelo_whisper})...")
-        modelo = whisper.load_model(modelo_whisper)
-        resultado = modelo.transcribe(ruta, language=idioma)
-        return [
-            (float(s["start"]), float(s["end"]), s["text"].strip())
-            for s in resultado.get("segments", [])
-            if s.get("text", "").strip()
-        ]
-    except ImportError:
-        pass
-
-    raise RuntimeError(
-        "No hay motor de transcripcion instalado.\n"
-        "Instala uno con: pip install faster-whisper"
-    )
+    return [(s.inicio, s.fin, s.texto) for s in transcribir(ruta, idioma, modelo_whisper)]
 
 
 def anadir_subtitulos_automaticos(
