@@ -20,7 +20,7 @@ los extras de subtítulos.
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![FFmpeg required](https://img.shields.io/badge/requires-FFmpeg-red)](https://ffmpeg.org/)
-[![Tests](https://img.shields.io/badge/tests-133%20passed%2C%204%20skipped-brightgreen)](#-tests)
+[![Tests](https://img.shields.io/badge/tests-pytest-blue)](#-tests)
 
 ---
 
@@ -251,11 +251,7 @@ pip install -e "automontaje[dev]"   # desde la raíz, sin PyTorch
 python -m pytest automontaje/tests -q
 ```
 
-```
-133 passed, 4 skipped
-```
-
-Los 4 omitidos llaman al servicio real de Edge TTS y solo se ejecutan con `AEGS_TEST_INTERNET=1`. Sin FFmpeg (ni en el PATH ni en `AEGS_FFMPEG`/`AEGS_FFPROBE`) se omiten además, con su motivo, los 16 casos de integración que montan vídeo de verdad. CI (GitHub Actions) los pasa en Ubuntu con Python 3.12 y 3.13.
+Los 4 omitidos habituales llaman al servicio real de Edge TTS y solo se ejecutan con `AEGS_TEST_INTERNET=1`. Sin FFmpeg (ni en el PATH ni en `AEGS_FFMPEG`/`AEGS_FFPROBE`) se omiten además las pruebas de integración con vídeo real. CI (GitHub Actions) ejecuta la suite en Ubuntu con Python 3.12 y 3.13.
 
 ---
 

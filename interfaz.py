@@ -739,6 +739,9 @@ class App(ctk.CTk):
 
     def _reiniciar(self):
         """Resetea la interfaz al estado inicial."""
+        if self.procesando:
+            self._cancelar()
+            return
         self.archivo_seleccionado = None
         self.procesando = False
         self.lbl_archivo.configure(
