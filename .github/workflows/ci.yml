@@ -19,7 +19,13 @@ jobs:
           cache: pip
           cache-dependency-path: automontaje/pyproject.toml
       - name: FFmpeg del sistema
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
       # Instalación mínima: sin Whisper ni PyTorch (extra opcional `subtitulos`).
       - run: python -m pip install -e "automontaje[dev]"
       - name: Sin PyTorch ni Whisper en la instalación mínima
