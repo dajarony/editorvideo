@@ -27,6 +27,10 @@ def main():
     parser.add_argument("--sin-mejora-real", action="store_true", help="No aplicar mejora visual real")
     parser.add_argument("--nivel", default="media", choices=["suave", "media", "fuerte"], help="Nivel de mejora real")
     parser.add_argument("--vertical", action="store_true", help="Exportar en formato vertical 9:16")
+    parser.add_argument(
+        "--encuadre", default="centro", choices=["centro", "izquierda", "derecha", "completo"],
+        help="Que parte conservar al pasar a vertical (completo: sin recortar, con fondo desenfocado)"
+    )
     parser.add_argument("--subtitulos", action="store_true", help="Generar y quemar subtitulos automaticos")
     parser.add_argument("--muletillas", action="store_true", help="Eliminar muletillas con Whisper")
     parser.add_argument("--idioma", default="es", help="Idioma para muletillas: es | en")
@@ -63,6 +67,7 @@ def main():
             "mejora_real": not args.sin_mejora_real,
             "nivel_mejora": args.nivel,
             "formato_vertical": args.vertical,
+            "encuadre_vertical": args.encuadre,
             "subtitulos": args.subtitulos,
             "idioma": args.idioma,
         }
@@ -74,7 +79,7 @@ def main():
     print(f"   Muletillas   : {'Si' if config['eliminar_muletillas'] else 'No'}")
     print(f"   Color grading: {'Si - ' + config['estilo_color'] if config['color_grading'] else 'No'}")
     print(f"   Mejora real  : {'Si - ' + config['nivel_mejora'] if config['mejora_real'] else 'No'}")
-    print(f"   Vertical 9:16: {'Si' if config['formato_vertical'] else 'No'}")
+    print(f"   Vertical 9:16: {'Si - ' + config.get('encuadre_vertical', 'centro') if config['formato_vertical'] else 'No'}")
     print(f"   Subtitulos   : {'Si' if config.get('subtitulos') else 'No'}")
     print(f"   Audio fades  : {'Si' if config['audio_fades'] else 'No'}")
     print()

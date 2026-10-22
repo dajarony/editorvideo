@@ -251,18 +251,23 @@ def cortar_silencios(
 
 # ─── Paso 2: Eliminar muletillas ────────────────────────
 
-def eliminar_muletillas(
+def recortar_muletillas(
     ruta_entrada: str,
     ruta_salida: str,
     idioma: str = "es"
-) -> str:
-    """Detecta y elimina muletillas usando Whisper word timestamps."""
+) -> tuple:
+    """Detecta y elimina muletillas usando Whisper word timestamps.
+
+    Devuelve (ruta_salida, tramos conservados en segundos de la entrada).
+    """
+    duracion_total = _duracion_video(ruta_entrada)
+    todo = [(0.0, round(duracion_total, 4))]
     try:
         import whisper
     except ImportError:
         logger.warning("  ⚠  Whisper no instalado. Omitiendo muletillas.")
         shutil.copy2(ruta_entrada, ruta_salida)
-        return ruta_salida
+        return ruta_salida, todo
 
     palabras_filler = MULETILLAS.get(idioma, MULETILLAS["es"])
     logger.info(f"  🎙  Transcribiendo con Whisper para detectar muletillas...")
@@ -280,11 +285,9 @@ def eliminar_muletillas(
     if not cortes:
         logger.info("  ✅ No se detectaron muletillas.")
         shutil.copy2(ruta_entrada, ruta_salida)
-        return ruta_salida
+        return ruta_salida, todo
 
     logger.info(f"  ✂  Eliminando {len(cortes)} muletillas...")
-    duracion_total = _duracion_video(ruta_entrada)
-
     mantener = []
     ultimo_fin = 0.0
     for inicio, fin in sorted(cortes):
@@ -296,11 +299,20 @@ def eliminar_muletillas(
 
     if not mantener:
         shutil.copy2(ruta_entrada, ruta_salida)
-        return ruta_salida
+        return ruta_salida, todo
 
     _recortar_tramos(ruta_entrada, ruta_salida, mantener, "eliminar_muletillas")
     logger.info(f"  ✅ Muletillas eliminadas → {os.path.basename(ruta_salida)}")
-    return ruta_salida
+    return ruta_salida, mantener
+
+
+def eliminar_muletillas(
+    ruta_entrada: str,
+    ruta_salida: str,
+    idioma: str = "es"
+) -> str:
+    """Detecta y elimina muletillas usando Whisper word timestamps."""
+    return recortar_muletillas(ruta_entrada, ruta_salida, idioma)[0]
 
 
 # ─── Paso 3: Color grading ───────────────────────────────
@@ -357,16 +369,40 @@ def anadir_audio_fades(
 
 # ─── Mejora real (FFmpeg, sin IA) ───────────────────────
 
-def convertir_vertical_9_16(ruta_entrada: str, ruta_salida: str) -> str:
-    """Convierte un video a formato vertical 1080x1920 con recorte centrado."""
-    logger.info("  Convirtiendo a formato vertical 9:16...")
-    filtro = (
+# Dónde se coloca el recorte de 1080 px de ancho dentro del vídeo escalado a 1920 de alto.
+ENCUADRES_VERTICALES = {"izquierda": 0.0, "centro": 0.5, "derecha": 1.0}
+
+
+def _filtro_vertical(encuadre: str) -> str:
+    if encuadre == "completo":
+        # Todo el vídeo cabe, centrado, sobre una copia ampliada y desenfocada que rellena el 9:16.
+        return (
+            "split[fondo][frente];"
+            "[fondo]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+            "boxblur=30:2,eq=brightness=-0.08[fondo];"
+            "[frente]scale=1080:1920:force_original_aspect_ratio=decrease[frente];"
+            "[fondo][frente]overlay=(W-w)/2:(H-h)/2,setsar=1"
+        )
+    if encuadre not in ENCUADRES_VERTICALES:
+        raise ValueError(f"Encuadre vertical desconocido: {encuadre}")
+    x = ENCUADRES_VERTICALES[encuadre]
+    return (
         "scale='if(gt(a,9/16),-2,1080)':'if(gt(a,9/16),1920,-2)',"
-        "crop=1080:1920:(iw-1080)/2:(ih-1920)/2,setsar=1"
+        f"crop=1080:1920:(iw-1080)*{x}:(ih-1920)/2,setsar=1"
     )
+
+
+def convertir_vertical_9_16(ruta_entrada: str, ruta_salida: str, encuadre: str = "centro") -> str:
+    """Convierte un video a formato vertical 1080x1920.
+
+    encuadre: "centro", "izquierda" o "derecha" eligen qué parte del ancho se conserva
+    (para no cortar a una persona situada a un lado); "completo" no recorta nada y
+    rellena el resto con el propio vídeo desenfocado.
+    """
+    logger.info(f"  Convirtiendo a formato vertical 9:16 (encuadre: {encuadre})...")
     _run_ffmpeg([
         binario("ffmpeg"), "-y", "-i", ruta_entrada,
-        "-vf", filtro,
+        "-vf", _filtro_vertical(encuadre),
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
         "-movflags", "+faststart",
@@ -800,11 +836,10 @@ def aplicar_todas_mejoras(
 ) -> dict:
     """Aplica todas las mejoras en cadena sobre un vídeo.
 
-    Pipeline:
-        1. Cortar silencios (FFmpeg)
-        2. Eliminar muletillas (Whisper, opcional)
-        3. Color grading cinematográfico (FFmpeg)
-        4. Fades de audio 30ms (FFmpeg)
+    Convierte las opciones en un contrato de herramientas y lo ejecuta con el mismo
+    ejecutor que la interfaz y los contratos (modulos/servicio_edicion.py). Orden:
+    silencios, muletillas, color, mejora real, vertical, voz, subtítulos, fades de audio
+    y super resolución.
 
     Args:
         ruta_entrada: Ruta al vídeo original.
@@ -833,76 +868,17 @@ def aplicar_todas_mejoras(
         **(config or {}),
     }
 
-    carpeta = os.path.dirname(ruta_salida) or "."
-    base    = os.path.splitext(os.path.basename(ruta_entrada))[0]
-    temps   = []
-    pasos   = []
+    from .servicio_edicion import procesar
 
-    def _temp(sufijo):
-        p = os.path.join(carpeta, f"_tmp_{sufijo}_{base}.mp4")
-        temps.append(p)
-        return p
-
-    try:
-        actual = ruta_entrada
-        logger.info("=" * 55)
-        logger.info("MÓDULO 5 — Mejoras Automáticas de Vídeo")
-        logger.info("=" * 55)
-
-        if cfg["cortar_silencios"]:
-            actual = cortar_silencios(
-                actual, _temp("sil"),
-                umbral_db=cfg["umbral_silencio_db"],
-                duracion_min=cfg["duracion_silencio_s"]
-            )
-            pasos.append("silencios")
-
-        if cfg["eliminar_muletillas"]:
-            actual = eliminar_muletillas(actual, _temp("mul"), idioma=cfg["idioma"])
-            pasos.append("muletillas")
-
-        if cfg["color_grading"]:
-            actual = aplicar_color_grading(actual, _temp("col"), estilo=cfg["estilo_color"])
-            pasos.append("color_grading")
-
-        if cfg["mejora_real"]:
-            actual = mejorar_imagen_real(actual, _temp("real"), nivel=cfg["nivel_mejora"])
-            pasos.append("mejora_real")
-
-        if cfg["formato_vertical"]:
-            actual = convertir_vertical_9_16(actual, _temp("vertical"))
-            pasos.append("vertical_9_16")
-
-        if cfg["limpiar_voz"]:
-            actual = limpiar_voz(actual, _temp("voz"), nivel=cfg["nivel_voz"])
-            pasos.append("limpiar_voz")
-
-        if cfg["subtitulos"]:
-            actual = anadir_subtitulos_automaticos(
-                actual, _temp("subs"), idioma=cfg["idioma"]
-            )
-            pasos.append("subtitulos")
-
-        if cfg["audio_fades"]:
-            actual = anadir_audio_fades(actual, ruta_salida, duracion_fade=cfg["duracion_fade"])
-            pasos.append("audio_fades")
-        else:
-            shutil.copy2(actual, ruta_salida)
-
-        logger.info("=" * 55)
-        logger.info(f"✅ Pipeline completado: {', '.join(pasos)}")
-        logger.info(f"   Salida → {ruta_salida}")
-        logger.info("=" * 55)
-        return {"exito": True, "archivo": ruta_salida, "pasos": pasos}
-
-    except Exception as e:
-        logger.error(f"❌ Error en Módulo 5: {e}")
-        return {"exito": False, "error": str(e), "pasos": pasos}
-
-    finally:
-        for t in temps:
-            if os.path.exists(t):
-                try:
-                    os.remove(t)
-                except OSError:
-                    pass
+    logger.info("=" * 55)
+    logger.info("MÓDULO 5 — Mejoras Automáticas de Vídeo")
+    logger.info("=" * 55)
+    resultado = procesar(ruta_entrada, ruta_salida, cfg)
+    if not resultado["exito"]:
+        error = "; ".join(resultado.get("errores", [])) or "error desconocido"
+        logger.error(f"❌ Error en Módulo 5: {error}")
+        return {"exito": False, "error": error, "pasos": resultado.get("pasos_ejecutados", [])}
+    pasos = resultado.get("pasos_ejecutados", [])
+    logger.info(f"✅ Pipeline completado: {', '.join(pasos)}")
+    logger.info(f"   Salida → {ruta_salida}")
+    return {"exito": True, "archivo": ruta_salida, "pasos": pasos}

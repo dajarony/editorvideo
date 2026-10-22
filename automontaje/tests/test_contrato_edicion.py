@@ -35,7 +35,7 @@ class TestContratoHerramientas:
         assert res["valido"] is True
         pasos = res["contrato"]["herramientas"]
         assert pasos[0]["parametros"]["nivel"] == "media"
-        assert pasos[1]["parametros"] == {}
+        assert pasos[1]["parametros"] == {"encuadre": "centro"}
 
     def test_validador_rechaza_herramienta_desconocida(self):
         res = validar_contrato_herramientas({

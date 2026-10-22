@@ -20,6 +20,7 @@ class ConfigEdicion:
     mejora_real: bool = True
     nivel_mejora: str = "media"
     formato_vertical: bool = False
+    encuadre_vertical: str = "centro"
     subtitulos: bool = False
     limpiar_voz: bool = False
     nivel_voz: str = "media"
@@ -50,7 +51,16 @@ def parsear_comando_edicion(texto: str) -> dict:
 
     if any(p in t for p in ("vertical", "tiktok", "reels", "shorts", "9:16", "9/16")):
         cfg.formato_vertical = True
-        acciones.append("formato vertical 9:16")
+        if any(p in t for p in ("sin recortar", "completo", "entero", "sin cortar", "que se vea todo")):
+            cfg.encuadre_vertical = "completo"
+        elif "izquierda" in t:
+            cfg.encuadre_vertical = "izquierda"
+        elif "derecha" in t:
+            cfg.encuadre_vertical = "derecha"
+        acciones.append(
+            "formato vertical 9:16"
+            + ("" if cfg.encuadre_vertical == "centro" else f" ({cfg.encuadre_vertical})")
+        )
 
     if any(p in t for p in ("quita ruido", "quitar ruido", "sin ruido", "limpia la voz",
                             "limpiar voz", "limpia el audio", "limpiar audio",

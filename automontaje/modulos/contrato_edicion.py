@@ -157,7 +157,20 @@ def _ejecutar_mejora_real(entrada: str, salida: str, params: dict[str, Any]) -> 
 def _ejecutar_vertical(entrada: str, salida: str, params: dict[str, Any]) -> str:
     from .mejoras import convertir_vertical_9_16
 
-    return convertir_vertical_9_16(entrada, salida)
+    return convertir_vertical_9_16(entrada, salida, encuadre=params["encuadre"])
+
+
+def _ejecutar_muletillas(entrada: str, salida: str, params: dict[str, Any]) -> SalidaPaso:
+    from .mejoras import recortar_muletillas
+
+    ruta, conservados = recortar_muletillas(entrada, salida, idioma=params["idioma"])
+    return SalidaPaso(ruta, conservados)
+
+
+def _ejecutar_superresolucion(entrada: str, salida: str, params: dict[str, Any]) -> str:
+    from .superresolucion import ampliar_con_ia
+
+    return ampliar_con_ia(entrada, salida, modelo=params["modelo"])
 
 
 def _ejecutar_subtitulos(entrada: str, salida: str, params: dict[str, Any]) -> str:
@@ -279,10 +292,24 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
         },
         ejecutar=_ejecutar_mejora_real,
     ),
+    "eliminar_muletillas": HerramientaEdicion(
+        nombre="eliminar_muletillas",
+        descripcion="Quita muletillas (eh, umm, este...) cortando imagen y audio a la vez.",
+        parametros={
+            "idioma": {"type": "str", "default": "es", "choices": ["es", "en"]},
+        },
+        ejecutar=_ejecutar_muletillas,
+    ),
     "vertical_9_16": HerramientaEdicion(
         nombre="vertical_9_16",
         descripcion="Convierte el video a formato vertical 9:16.",
-        parametros={},
+        parametros={
+            "encuadre": {
+                "type": "str",
+                "default": "centro",
+                "choices": ["centro", "izquierda", "derecha", "completo"],
+            },
+        },
         ejecutar=_ejecutar_vertical,
     ),
     "subtitulos": HerramientaEdicion(
@@ -317,6 +344,18 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
             "duracion_ms": {"type": "int", "default": 30, "min": 5, "max": 2000},
         },
         ejecutar=_ejecutar_fades_audio,
+    ),
+    "superresolucion_ia": HerramientaEdicion(
+        nombre="superresolucion_ia",
+        descripcion="Amplia x4 con IA (Real-ESRGAN); lento en videos.",
+        parametros={
+            "modelo": {
+                "type": "str",
+                "default": "realesrgan-x4plus",
+                "choices": ["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesrnet-x4plus"],
+            },
+        },
+        ejecutar=_ejecutar_superresolucion,
     ),
     "corte": HerramientaEdicion(
         nombre="corte",
