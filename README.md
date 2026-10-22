@@ -1,5 +1,18 @@
 # 🎬 AEGS — Editor de Vídeo Automático con IA
 
+El editor permite previsualizar ocho segundos en una comparación lado a lado
+(original a la izquierda, edición a la derecha), consultar el avance de FFmpeg
+y cancelar un trabajo. El botón **Proponer con modelo local** usa Ollama instalado
+en este ordenador; escribe el contrato propuesto en la caja JSON para revisarlo
+antes de ejecutarlo. Configura `AEGS_MODELO` con el nombre de un modelo de Ollama.
+
+El automontaje genera por defecto subtítulos desde `texto_narracion` y la duración
+medida de cada escena. Este modo no necesita Whisper: reparte el tiempo entre
+grupos de palabras, por lo que sirve para subtítulos legibles, no para sincronía
+exacta de cada palabra. Para transcripción de la voz real, configura
+`"subtitulos": {"generar": true, "modo": "transcripcion"}` e instala uno de
+los extras de subtítulos.
+
 > Sistema en Python para **mejorar, editar y montar vídeos automáticamente**.
 > Combina FFmpeg, IA local (Whisper, Demucs, Real-ESRGAN) y un sistema de
 > **contratos de herramientas seguras** controlable por lenguaje natural en español.
@@ -7,7 +20,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![FFmpeg required](https://img.shields.io/badge/requires-FFmpeg-red)](https://ffmpeg.org/)
-[![Tests](https://img.shields.io/badge/tests-133%20passed%2C%204%20skipped-brightgreen)](#-tests)
+[![Tests](https://img.shields.io/badge/tests-pytest-blue)](#-tests)
 
 ---
 
@@ -147,6 +160,13 @@ lo **ejecuta paso a paso de forma segura**:
 }
 ```
 
+**Los segundos son los del vídeo original.** En «corta de 7 a 9 y pon un texto en el
+segundo 12», el 12 es el del vídeo que tienes delante: como el corte quita 2 s, el
+texto aparece en el segundo 10 del resultado, sobre la misma imagen. Si un momento
+pedido cae en un tramo que otro paso ya quitó, se usa el siguiente que queda y se
+avisa; un corte de algo ya quitado se omite. Para que cada paso use los segundos del
+vídeo que le llega, añade `"tiempos": "resultado"` al contrato.
+
 ### Modo 4 — Mejorar un vídeo por CLI
 
 ```bash
@@ -231,11 +251,7 @@ pip install -e "automontaje[dev]"   # desde la raíz, sin PyTorch
 python -m pytest automontaje/tests -q
 ```
 
-```
-133 passed, 4 skipped
-```
-
-Los 4 omitidos llaman al servicio real de Edge TTS y solo se ejecutan con `AEGS_TEST_INTERNET=1`. Sin FFmpeg (ni en el PATH ni en `AEGS_FFMPEG`/`AEGS_FFPROBE`) se omiten además, con su motivo, los 16 casos de integración que montan vídeo de verdad. CI (GitHub Actions) los pasa en Ubuntu con Python 3.12 y 3.13.
+Los 4 omitidos habituales llaman al servicio real de Edge TTS y solo se ejecutan con `AEGS_TEST_INTERNET=1`. Sin FFmpeg (ni en el PATH ni en `AEGS_FFMPEG`/`AEGS_FFPROBE`) se omiten además las pruebas de integración con vídeo real. CI (GitHub Actions) ejecuta la suite en Ubuntu con Python 3.12 y 3.13.
 
 ---
 

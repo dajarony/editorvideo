@@ -5,7 +5,7 @@
 # Instalar: pip install -r requirements.txt
 # Requisito externo: FFmpeg y ffprobe deben estar en el PATH del sistema.
 
-edge-tts>=6.1.0
+edge-tts>=7.3.1
 pydub>=0.25.1
 audioop-lts>=0.2.1        # Requerido por pydub en Python 3.13+
 # Opcional, solo para subtítulos (arrastra PyTorch, varios GB):

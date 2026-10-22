@@ -10,16 +10,12 @@ import os
 import sys
 import json
 import threading
-import subprocess
-import shutil
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
-from PIL import Image, ImageTk
 
 # ─── Config ─────────────────────────────────────────────
 BASE        = os.path.dirname(os.path.abspath(__file__))
-ESRGAN_EXE  = os.path.join(BASE, "realesrgan", "realesrgan-ncnn-vulkan.exe")
-ESRGAN_DIR  = os.path.join(BASE, "realesrgan")
+sys.path.insert(0, BASE)
 
 EXTENSIONES_VIDEO  = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 EXTENSIONES_IMAGEN = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
@@ -40,6 +36,7 @@ class App(ctk.CTk):
 
         self.archivo_seleccionado = None
         self.procesando = False
+        self.control_actual = None
         self.nivel_voz_actual = "media"
 
         self._construir_ui()
@@ -117,6 +114,16 @@ class App(ctk.CTk):
                         variable=self.var_muletillas).pack(anchor="w", pady=3)
         ctk.CTkCheckBox(col_izq, text="Convertir a vertical 9:16",
                         variable=self.var_vertical).pack(anchor="w", pady=3)
+        frame_encuadre = ctk.CTkFrame(col_izq, fg_color="transparent")
+        frame_encuadre.pack(anchor="w", padx=(28, 0), pady=(0, 3))
+        ctk.CTkLabel(frame_encuadre, text="Encuadre:").pack(side="left", padx=(0, 8))
+        self.encuadre_vertical = ctk.CTkOptionMenu(
+            frame_encuadre,
+            values=["centro", "izquierda", "derecha", "completo"],
+            width=120
+        )
+        self.encuadre_vertical.set("centro")
+        self.encuadre_vertical.pack(side="left")
         ctk.CTkCheckBox(col_izq, text="Subtitulos automaticos (Whisper)",
                         variable=self.var_subtitulos).pack(anchor="w", pady=3)
         ctk.CTkCheckBox(col_izq, text="Aislar voz / quitar musica de fondo (IA)",
@@ -215,6 +222,11 @@ class App(ctk.CTk):
             width=210, height=34,
             fg_color="#555", hover_color="#444"
         ).pack(side="left")
+        ctk.CTkButton(
+            frame_cmd_botones, text="Proponer con modelo local",
+            command=self._interpretar_con_modelo, width=205,
+            fg_color="#555", hover_color="#444",
+        ).pack(side="left", padx=(8, 0))
         self.lbl_plan_comando = ctk.CTkLabel(
             frame_cmd_botones,
             text="",
@@ -284,6 +296,19 @@ class App(ctk.CTk):
         self.barra = ctk.CTkProgressBar(frame_progreso, width=700)
         self.barra.pack(pady=(0, 12))
         self.barra.set(0)
+
+        frame_revision = ctk.CTkFrame(self, fg_color="transparent")
+        frame_revision.pack(pady=(0, 10))
+        ctk.CTkLabel(frame_revision, text="Previsualizar desde el segundo:").pack(side="left")
+        self.segundo_preview = ctk.CTkEntry(frame_revision, width=70)
+        self.segundo_preview.insert(0, "0")
+        self.segundo_preview.pack(side="left", padx=6)
+        self.btn_preview = ctk.CTkButton(frame_revision, text="Comparar antes/después (8 s)",
+                                         command=self._previsualizar)
+        self.btn_preview.pack(side="left", padx=5)
+        self.btn_cancelar = ctk.CTkButton(frame_revision, text="Cancelar", command=self._cancelar,
+                                          state="disabled", fg_color="#8b3333")
+        self.btn_cancelar.pack(side="left", padx=5)
 
         # ── Botones inferiores ───────────────────────────
         self.btn_procesar = ctk.CTkButton(
@@ -357,6 +382,80 @@ class App(ctk.CTk):
         self.lbl_estado.configure(text="Archivo cargado. Elige las mejoras y haz clic en PROCESAR.")
         self.barra.set(0)
 
+    def _config_actual(self):
+        ext = os.path.splitext(self.archivo_seleccionado)[1].lower()
+        tipo = "video" if ext in EXTENSIONES_VIDEO else "imagen"
+        return {
+            "tipo": tipo, "cortar_silencios": self.var_silencios.get(),
+            "color_grading": self.var_color.get(), "estilo_color": self.estilo_color.get(),
+            "audio_fades": self.var_fades.get(), "eliminar_muletillas": self.var_muletillas.get(),
+            "formato_vertical": self.var_vertical.get(), "encuadre_vertical": self.encuadre_vertical.get(),
+            "subtitulos": self.var_subtitulos.get(), "limpiar_voz": self.var_limpiar_voz.get(),
+            "nivel_voz": self.nivel_voz_actual, "mejora_real": self.var_mejora_real.get(),
+            "nivel_mejora": self.nivel_mejora.get(), "esrgan": self.var_esrgan.get(),
+            "modelo_esrgan": self.modelo_esrgan.get(),
+        }
+
+    def _iniciar_trabajo(self):
+        from automontaje.modulos.proceso import ControlProceso
+        self.control_actual = ControlProceso(al_progresar=self._estado)
+        self.procesando = True
+        self.btn_procesar.configure(state="disabled")
+        self.btn_preview.configure(state="disabled")
+        self.btn_cancelar.configure(state="normal")
+        self.barra.set(0)
+
+    def _terminar_trabajo(self):
+        self.procesando = False
+        self.control_actual = None
+        self.after(0, lambda: self.btn_procesar.configure(state="normal", text="PROCESAR"))
+        self.after(0, lambda: self.btn_preview.configure(state="normal"))
+        self.after(0, lambda: self.btn_cancelar.configure(state="disabled"))
+
+    def _cancelar(self):
+        if self.control_actual:
+            self.control_actual.cancelar()
+            self._estado("Cancelando el trabajo…")
+
+    def _previsualizar(self):
+        if self.procesando:
+            return
+        if not self.archivo_seleccionado:
+            messagebox.showwarning("Aviso", "Primero selecciona un vídeo.")
+            return
+        try:
+            desde = float(self.segundo_preview.get())
+            if desde < 0:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("Segundo inválido", "Escribe un segundo igual o mayor que cero.")
+            return
+        self._iniciar_trabajo()
+        threading.Thread(target=self._hilo_preview, args=(self.archivo_seleccionado,
+                        self._config_actual(), desde, self.control_actual), daemon=True).start()
+
+    def _hilo_preview(self, ruta, config, desde, control):
+        try:
+            from automontaje.modulos.servicio_edicion import previsualizar
+            base, _ = os.path.splitext(ruta)
+            salida = self._ruta_salida_unica(base + "_comparacion.mp4")
+            resultado = previsualizar(ruta, salida, config, desde, control=control)
+            if resultado.get("cancelado"):
+                self._estado("Previsualización cancelada", 0)
+            elif not resultado["exito"]:
+                raise RuntimeError("\n".join(resultado.get("errores", [])))
+            else:
+                self._ultimo_archivo = salida
+                self._ultima_salida = os.path.dirname(salida)
+                self._estado("Comparación lista: original a la izquierda, editado a la derecha", 1)
+                self.after(0, lambda: os.startfile(salida))
+        except Exception as exc:
+            mensaje = str(exc)
+            self._estado("Error de previsualización: " + mensaje, 0)
+            self.after(0, lambda mensaje=mensaje: messagebox.showerror("Previsualización", mensaje))
+        finally:
+            self._terminar_trabajo()
+
     def _procesar(self):
         if self.procesando:
             return
@@ -364,25 +463,7 @@ class App(ctk.CTk):
             messagebox.showwarning("Aviso", "Primero selecciona un archivo.")
             return
 
-        ext  = os.path.splitext(self.archivo_seleccionado)[1].lower()
-        tipo = "video" if ext in EXTENSIONES_VIDEO else "imagen"
-
-        config = {
-            "tipo":               tipo,
-            "cortar_silencios":   self.var_silencios.get(),
-            "color_grading":      self.var_color.get(),
-            "estilo_color":       self.estilo_color.get(),
-            "audio_fades":        self.var_fades.get(),
-            "eliminar_muletillas":self.var_muletillas.get(),
-            "formato_vertical":   self.var_vertical.get(),
-            "subtitulos":         self.var_subtitulos.get(),
-            "limpiar_voz":        self.var_limpiar_voz.get(),
-            "nivel_voz":          getattr(self, "nivel_voz_actual", "media"),
-            "mejora_real":        self.var_mejora_real.get(),
-            "nivel_mejora":       self.nivel_mejora.get(),
-            "esrgan":             self.var_esrgan.get(),
-            "modelo_esrgan":      self.modelo_esrgan.get(),
-        }
+        config = self._config_actual()
 
         # Aviso: ampliar video con IA tarda horas
         if config["tipo"] == "video" and config["esrgan"]:
@@ -398,7 +479,7 @@ class App(ctk.CTk):
             if not seguir:
                 return
 
-        self.procesando = True
+        self._iniciar_trabajo()
         self.btn_procesar.configure(state="disabled", text="Procesando...")
         self.barra.set(0)
 
@@ -412,7 +493,6 @@ class App(ctk.CTk):
     def _aplicar_comando(self):
         comando = self.txt_comando.get("1.0", "end").strip()
         try:
-            sys.path.insert(0, BASE)
             from automontaje.modulos.editor_comandos import parsear_comando_edicion
             plan = parsear_comando_edicion(comando)
         except Exception as e:
@@ -428,6 +508,7 @@ class App(ctk.CTk):
         self.var_mejora_real.set(cfg["mejora_real"])
         self.nivel_mejora.set(cfg["nivel_mejora"])
         self.var_vertical.set(cfg["formato_vertical"])
+        self.encuadre_vertical.set(cfg.get("encuadre_vertical", "centro"))
         self.var_subtitulos.set(cfg.get("subtitulos", False))
         self.var_limpiar_voz.set(cfg.get("limpiar_voz", False))
         self.nivel_voz_actual = cfg.get("nivel_voz", "media")
@@ -442,7 +523,6 @@ class App(ctk.CTk):
     def _contrato_desde_comando(self):
         comando = self.txt_comando.get("1.0", "end").strip()
         try:
-            sys.path.insert(0, BASE)
             from automontaje.modulos.editor_comandos import parsear_comando_contrato
             plan = parsear_comando_contrato(comando)
         except Exception as e:
@@ -466,6 +546,26 @@ class App(ctk.CTk):
         self.lbl_plan_comando.configure(text=texto[:110])
         self._validar_contrato()
 
+    def _interpretar_con_modelo(self):
+        """La propuesta queda visible en el JSON; el botón Ejecutar sigue siendo separado."""
+        orden = self.txt_comando.get("1.0", "end").strip()
+        self.lbl_plan_comando.configure(text="Consultando el modelo local…")
+        def trabajo():
+            try:
+                from automontaje.modulos.modelo_ordenes import interpretar_orden
+                contrato = interpretar_orden(orden)
+                def mostrar():
+                    self.txt_contrato.delete("1.0", "end")
+                    self.txt_contrato.insert("1.0", json.dumps(contrato, ensure_ascii=False, indent=2))
+                    self.lbl_plan_comando.configure(text="Revisa el contrato propuesto y pulsa Ejecutar si estás conforme.")
+                    self._validar_contrato()
+                self.after(0, mostrar)
+            except Exception as exc:
+                mensaje = str(exc)
+                self.after(0, lambda mensaje=mensaje: messagebox.showerror("Modelo local", mensaje))
+                self.after(0, lambda: self.lbl_plan_comando.configure(text="La propuesta no se aplicó."))
+        threading.Thread(target=trabajo, daemon=True).start()
+
     def _leer_contrato_ui(self):
         texto = self.txt_contrato.get("1.0", "end").strip()
         if not texto:
@@ -478,7 +578,6 @@ class App(ctk.CTk):
     def _validar_contrato(self):
         try:
             contrato = self._leer_contrato_ui()
-            sys.path.insert(0, BASE)
             from automontaje.modulos.contrato_edicion import validar_contrato_herramientas
             validacion = validar_contrato_herramientas(contrato)
         except Exception as e:
@@ -513,7 +612,6 @@ class App(ctk.CTk):
 
         try:
             contrato = self._leer_contrato_ui()
-            sys.path.insert(0, BASE)
             from automontaje.modulos.contrato_edicion import validar_contrato_herramientas
             validacion = validar_contrato_herramientas(contrato)
         except Exception as e:
@@ -524,7 +622,7 @@ class App(ctk.CTk):
             messagebox.showerror("Contrato invalido", "\n".join(validacion["errores"][:8]))
             return
 
-        self.procesando = True
+        self._iniciar_trabajo()
         self.btn_procesar.configure(state="disabled")
         self.btn_ejecutar_contrato.configure(state="disabled", text="Ejecutando...")
         self.barra.set(0.08)
@@ -541,9 +639,12 @@ class App(ctk.CTk):
             ruta_salida = self._ruta_salida_unica(base + "_contrato" + ext)
             self._estado("Ejecutando contrato de herramientas...", 0.15)
 
-            sys.path.insert(0, BASE)
             from automontaje.modulos.contrato_edicion import ejecutar_contrato_herramientas
-            resultado = ejecutar_contrato_herramientas(ruta_entrada, ruta_salida, contrato)
+            resultado = ejecutar_contrato_herramientas(ruta_entrada, ruta_salida, contrato,
+                al_progresar=self._estado, control=self.control_actual)
+            if resultado.get("cancelado"):
+                self._estado("Edición cancelada", 0)
+                return
             if not resultado["exito"]:
                 raise RuntimeError("\n".join(resultado.get("errores", ["Error desconocido"])))
 
@@ -561,183 +662,39 @@ class App(ctk.CTk):
                 f"Video generado:\n{ruta_salida}"
             ))
         except Exception as e:
+            mensaje = str(e)
             self._estado(f"Error contrato: {e}", 0)
-            self.after(0, lambda: self.lbl_contrato.configure(
-                text=f"Error: {str(e)[:120]}",
+            self.after(0, lambda mensaje=mensaje: self.lbl_contrato.configure(
+                text=f"Error: {mensaje[:120]}",
                 text_color="#ff8a80"
             ))
-            self.after(0, lambda: messagebox.showerror("Error contrato", str(e)))
+            self.after(0, lambda mensaje=mensaje: messagebox.showerror("Error contrato", mensaje))
         finally:
-            self.procesando = False
-            self.after(0, lambda: self.btn_procesar.configure(state="normal"))
+            self._terminar_trabajo()
             self.after(0, lambda: self.btn_ejecutar_contrato.configure(
                 state="normal", text="Ejecutar contrato"
             ))
 
     def _hilo_procesar(self, ruta_entrada, config):
+        """Aplica las opciones marcadas con el motor unico (servicio_edicion -> contrato)."""
         try:
-            base, ext = os.path.splitext(ruta_entrada)
-            ruta_salida = self._ruta_salida_unica(base + "_mejorado" + ext)
+            from automontaje.modulos.servicio_edicion import contrato_desde_config, procesar
 
-            pasos_total = sum([
-                config["tipo"] == "video" and config["cortar_silencios"],
-                config["tipo"] == "video" and config["eliminar_muletillas"],
-                config["color_grading"],
-                config["tipo"] == "video" and config["audio_fades"],
-                config["mejora_real"],
-                config["tipo"] == "video" and config["formato_vertical"],
-                config["tipo"] == "video" and config.get("limpiar_voz", False),
-                config["tipo"] == "video" and config.get("subtitulos", False),
-                config["esrgan"],
-            ])
-            if pasos_total == 0:
+            if not contrato_desde_config(config)["herramientas"]:
                 self._estado("No hay mejoras seleccionadas.", 0)
                 return
-
-            paso_actual = 0
-            archivo_actual = ruta_entrada
-            temps = []
-
-            def tmp(sufijo):
-                p = base + f"_tmp_{sufijo}" + ext
-                temps.append(p)
-                return p
-
-            # ── Video: silencios ──────────────────────
-            if config["tipo"] == "video" and config["cortar_silencios"]:
-                self._estado("Eliminando silencios...", paso_actual / pasos_total)
-                out = tmp("sil")
-                sys.path.insert(0, BASE)
-                from automontaje.modulos.mejoras import cortar_silencios
-                cortar_silencios(archivo_actual, out)
-                archivo_actual = out
-                paso_actual += 1
-
-            # ── Video: muletillas ─────────────────────
-            if config["tipo"] == "video" and config["eliminar_muletillas"]:
-                self._estado("Eliminando muletillas...", paso_actual / pasos_total)
-                out = tmp("mul")
-                from automontaje.modulos.mejoras import eliminar_muletillas
-                eliminar_muletillas(archivo_actual, out)
-                archivo_actual = out
-                paso_actual += 1
-
-            # ── Color grading ─────────────────────────
-            if config["color_grading"]:
-                self._estado(f"Aplicando color grading '{config['estilo_color']}'...",
-                             paso_actual / pasos_total)
-                out = tmp("col")
-                from automontaje.modulos.mejoras import aplicar_color_grading
-                aplicar_color_grading(archivo_actual, out, estilo=config["estilo_color"])
-                archivo_actual = out
-                paso_actual += 1
-
-            # ── Video: audio fades ────────────────────
-            if config["tipo"] == "video" and config["audio_fades"]:
-                self._estado("Añadiendo audio fades...", paso_actual / pasos_total)
-                out = tmp("fad")
-                from automontaje.modulos.mejoras import anadir_audio_fades
-                anadir_audio_fades(archivo_actual, out)
-                archivo_actual = out
-                paso_actual += 1
-
-            # ── Mejora real (FFmpeg) ──────────────────
-            if config["mejora_real"]:
-                self._estado("Aplicando mejora real (brillo + nitidez + color + x2)...",
-                             paso_actual / pasos_total)
-                out = tmp("real")
-                from automontaje.modulos.mejoras import mejorar_imagen_real
-                mejorar_imagen_real(archivo_actual, out, nivel=config["nivel_mejora"])
-                archivo_actual = out
-                paso_actual += 1
-
-            # ── Formato vertical 9:16 ──────────────────
-            if config["tipo"] == "video" and config["formato_vertical"]:
-                self._estado("Convirtiendo a formato vertical 9:16...",
-                             paso_actual / pasos_total)
-                out = tmp("vertical")
-                from automontaje.modulos.mejoras import convertir_vertical_9_16
-                convertir_vertical_9_16(archivo_actual, out)
-                archivo_actual = out
-                paso_actual += 1
-
-            # ── Limpiar voz / quitar ruido ─────────────
-            if config["tipo"] == "video" and config.get("limpiar_voz", False):
-                self._estado("Aislando voz y quitando musica/fondo con IA...",
-                             paso_actual / pasos_total)
-                out = tmp("voz")
-                from automontaje.modulos.mejoras import limpiar_voz
-                limpiar_voz(archivo_actual, out, nivel=config.get("nivel_voz", "media"))
-                archivo_actual = out
-                paso_actual += 1
-
-            # ── Subtitulos automaticos (Whisper) ───────
-            if config["tipo"] == "video" and config.get("subtitulos", False):
-                self._estado("Generando subtitulos con Whisper (transcribiendo)...",
-                             paso_actual / pasos_total)
-                out = tmp("subs")
-                from automontaje.modulos.mejoras import anadir_subtitulos_automaticos
-                anadir_subtitulos_automaticos(archivo_actual, out)
-                archivo_actual = out
-                paso_actual += 1
-
-            # ── Real-ESRGAN ───────────────────────────
-            if config["esrgan"]:
-                self._estado("Aplicando super resolucion con IA (Real-ESRGAN)...",
-                             paso_actual / pasos_total)
-
-                # Verificar que el ejecutable y el modelo existen
-                if not os.path.exists(ESRGAN_EXE):
-                    raise RuntimeError(
-                        f"No se encontro Real-ESRGAN en:\n{ESRGAN_EXE}"
-                    )
-                modelo = config["modelo_esrgan"]
-                modelo_param = os.path.join(ESRGAN_DIR, "models", modelo + ".param")
-                modelo_bin   = os.path.join(ESRGAN_DIR, "models", modelo + ".bin")
-                if not (os.path.exists(modelo_param) and os.path.exists(modelo_bin)):
-                    raise RuntimeError(
-                        f"El modelo '{modelo}' no existe en la carpeta models.\n"
-                        "Modelos disponibles: realesrgan-x4plus, realesrgan-x4plus-anime"
-                    )
-
-                if config["tipo"] == "imagen":
-                    out = self._ruta_salida_unica(base + "_mejorado_4K" + ext)
-                    r = subprocess.run([
-                        ESRGAN_EXE,
-                        "-i", archivo_actual,
-                        "-o", out,
-                        "-n", modelo
-                    ], capture_output=True, text=True,
-                       encoding="utf-8", errors="ignore")
-                    if r.returncode != 0 or not os.path.exists(out):
-                        detalle = (r.stderr or r.stdout or "").strip()[-700:]
-                        raise RuntimeError(f"Real-ESRGAN fallo:\n{detalle}")
-                    archivo_actual = out
-                else:
-                    # Video: extraer frames, mejorar, reensamblar
-                    out = self._ruta_salida_unica(base + "_mejorado_4K.mp4")
-                    self._procesar_video_esrgan(archivo_actual, out, modelo)
-                    archivo_actual = out
-                ruta_salida = archivo_actual
-                paso_actual += 1
-
-            # ── Mover a destino final ─────────────────
-            if archivo_actual != ruta_salida and os.path.exists(archivo_actual):
-                shutil.copy2(archivo_actual, ruta_salida)
-
-            # Limpiar temporales
-            for t in temps:
-                if os.path.exists(t) and t != ruta_salida:
-                    try:
-                        os.remove(t)
-                    except Exception:
-                        pass
-
-            if not os.path.exists(ruta_salida):
-                raise RuntimeError(
-                    f"El archivo de salida no se genero:\n{ruta_salida}\n\n"
-                    "Alguna mejora fallo durante el proceso."
-                )
+            base, ext = os.path.splitext(ruta_entrada)
+            ruta_salida = self._ruta_salida_unica(base + "_mejorado" + ext)
+            resultado = procesar(
+                ruta_entrada, ruta_salida, config,
+                al_progresar=lambda fraccion, texto: self._estado(texto, fraccion),
+                control=self.control_actual,
+            )
+            if resultado.get("cancelado"):
+                self._estado("Edición cancelada", 0)
+                return
+            if not resultado["exito"]:
+                raise RuntimeError("\n".join(resultado.get("errores", ["Error desconocido"])))
 
             self._ultimo_archivo = ruta_salida
             self._ultima_salida  = os.path.dirname(ruta_salida)
@@ -749,14 +706,12 @@ class App(ctk.CTk):
             ))
 
         except Exception as e:
+            mensaje = str(e)
             self._estado(f"Error: {e}", 0)
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            self.after(0, lambda mensaje=mensaje: messagebox.showerror("Error", mensaje))
 
         finally:
-            self.procesando = False
-            self.after(0, lambda: self.btn_procesar.configure(
-                state="normal", text="PROCESAR"
-            ))
+            self._terminar_trabajo()
 
     def _ruta_salida_unica(self, ruta_base):
         """Evita sobrescribir resultados anteriores y reduce confusion de versiones."""
@@ -768,156 +723,6 @@ class App(ctk.CTk):
             if not os.path.exists(candidata):
                 return candidata
         raise RuntimeError("No se pudo crear un nombre de salida disponible.")
-
-    def _procesar_video_esrgan(self, ruta_entrada, ruta_salida, modelo):
-        """Extrae frames, aplica ESRGAN y reensambla. Lanza error si algo falla."""
-        import json as _json
-
-        def _run(cmd, desc):
-            r = subprocess.run(cmd, capture_output=True, text=True,
-                               encoding="utf-8", errors="ignore")
-            if r.returncode != 0:
-                detalle = (r.stderr or r.stdout or "").strip()[-700:]
-                raise RuntimeError(f"{desc} fallo:\n{detalle}")
-            return r
-
-        base_tmp = ruta_entrada.replace(".mp4", "_esrgan_tmp")
-        frames_orig  = os.path.join(base_tmp, "orig")
-        frames_mejor = os.path.join(base_tmp, "mejor")
-        os.makedirs(frames_orig,  exist_ok=True)
-        os.makedirs(frames_mejor, exist_ok=True)
-
-        try:
-            # Obtener FPS
-            res = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json",
-                 "-show_streams", ruta_entrada],
-                capture_output=True, text=True, encoding="utf-8", errors="ignore"
-            )
-            info = _json.loads(res.stdout)
-            fps = 30.0
-            for s in info["streams"]:
-                if s["codec_type"] == "video":
-                    n, d = s["r_frame_rate"].split("/")
-                    fps = float(n) / float(d)
-                    break
-
-            # Extraer frames
-            self._estado("Real-ESRGAN: extrayendo fotogramas del video...")
-            _run([
-                "ffmpeg", "-y", "-i", ruta_entrada,
-                os.path.join(frames_orig, "frame_%08d.png")
-            ], "Extraccion de fotogramas")
-
-            n_frames = len([f for f in os.listdir(frames_orig)
-                            if f.lower().endswith(".png")])
-            if n_frames == 0:
-                raise RuntimeError("No se extrajo ningun fotograma del video.")
-
-            # ESRGAN por lotes (cada lote = proceso nuevo => evita que
-            # un microcorte de GPU corrompa el resto en negro)
-            def _brillo(img):
-                """Devuelve el brillo medio (YAVG 0-255) de una imagen."""
-                r = subprocess.run(
-                    ["ffmpeg", "-i", img, "-vf",
-                     "signalstats,metadata=print:key=lavfi.signalstats.YAVG",
-                     "-f", "null", "-"],
-                    capture_output=True, text=True,
-                    encoding="utf-8", errors="ignore"
-                )
-                for tok in (r.stderr or "").split():
-                    if tok.startswith("lavfi.signalstats.YAVG="):
-                        try:
-                            return float(tok.split("=")[1])
-                        except ValueError:
-                            pass
-                return None
-
-            lista = sorted(f for f in os.listdir(frames_orig)
-                           if f.lower().endswith(".png"))
-            total = len(lista)
-            LOTE = 50
-            batch_in = os.path.join(base_tmp, "_lote")
-            hecho = 0
-
-            for ini in range(0, total, LOTE):
-                lote = lista[ini:ini + LOTE]
-                self._estado(
-                    f"Real-ESRGAN: mejorando con IA... "
-                    f"{min(ini + LOTE, total)}/{total} fotogramas "
-                    f"(esto tarda, no cierres la ventana)"
-                )
-
-                # Verificar lote: hasta 2 intentos
-                ok = False
-                for intento in range(2):
-                    if os.path.exists(batch_in):
-                        shutil.rmtree(batch_in, ignore_errors=True)
-                    os.makedirs(batch_in, exist_ok=True)
-                    for fn in lote:
-                        shutil.copy2(os.path.join(frames_orig, fn),
-                                     os.path.join(batch_in, fn))
-
-                    _run([
-                        ESRGAN_EXE, "-i", batch_in, "-o", frames_mejor,
-                        "-n", modelo, "-f", "png"
-                    ], f"Real-ESRGAN (fotogramas {ini + 1}-{min(ini + LOTE, total)})")
-
-                    # Comprobar que el lote no salio en negro
-                    salida0 = os.path.join(frames_mejor, lote[0])
-                    b_out = _brillo(salida0)
-                    b_in  = _brillo(os.path.join(frames_orig, lote[0]))
-                    if (b_out is None or b_out >= 20 or
-                            (b_in is not None and b_in < 20)):
-                        ok = True
-                        break  # lote correcto
-
-                if not ok:
-                    raise RuntimeError(
-                        "Real-ESRGAN devolvio fotogramas en negro (microcorte "
-                        "de la GPU).\n\nSoluciones:\n"
-                        "  - Cierra otros programas que usen la tarjeta grafica "
-                        "(juegos, navegador con video, etc.)\n"
-                        "  - Prueba con un video mas corto\n"
-                        "  - Vuelve a intentarlo"
-                    )
-                hecho += len(lote)
-
-            shutil.rmtree(batch_in, ignore_errors=True)
-
-            n_mejor = len([f for f in os.listdir(frames_mejor)
-                           if f.lower().endswith(".png")])
-            if n_mejor == 0:
-                raise RuntimeError("Real-ESRGAN no genero ningun fotograma mejorado.")
-
-            # Reensamblar video (sin audio)
-            self._estado(f"Real-ESRGAN: reensamblando video ({n_mejor} fotogramas)...")
-            temp_v = ruta_salida.replace(".mp4", "_v.mp4")
-            _run([
-                "ffmpeg", "-y", "-framerate", str(fps),
-                "-i", os.path.join(frames_mejor, "frame_%08d.png"),
-                "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-                "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
-                temp_v
-            ], "Reensamblado de video")
-
-            # Añadir audio original
-            self._estado("Real-ESRGAN: uniendo audio original...")
-            _run([
-                "ffmpeg", "-y", "-i", temp_v, "-i", ruta_entrada,
-                "-map", "0:v:0", "-map", "1:a:0?",
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-                "-movflags", "+faststart", "-shortest", ruta_salida
-            ], "Union de audio")
-
-            if os.path.exists(temp_v):
-                os.remove(temp_v)
-
-            if not os.path.exists(ruta_salida):
-                raise RuntimeError("El video final no se genero correctamente.")
-
-        finally:
-            shutil.rmtree(base_tmp, ignore_errors=True)
 
     def _estado(self, texto, progreso=None):
         self.after(0, lambda: self.lbl_estado.configure(text=texto))
@@ -934,6 +739,9 @@ class App(ctk.CTk):
 
     def _reiniciar(self):
         """Resetea la interfaz al estado inicial."""
+        if self.procesando:
+            self._cancelar()
+            return
         self.archivo_seleccionado = None
         self.procesando = False
         self.lbl_archivo.configure(
@@ -948,6 +756,7 @@ class App(ctk.CTk):
         self.var_fades.set(True)
         self.var_muletillas.set(False)
         self.var_vertical.set(False)
+        self.encuadre_vertical.set("centro")
         self.var_subtitulos.set(False)
         self.var_limpiar_voz.set(False)
         self.nivel_voz_actual = "media"

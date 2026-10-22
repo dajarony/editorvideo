@@ -1,5 +1,22 @@
 # 📦 Guía de Instalación
 
+Desde la raíz del repositorio, instala el motor básico con
+`pip install -e "automontaje[dev]"`. Necesitas `ffmpeg` y `ffprobe` en el PATH,
+o sus rutas en `AEGS_FFMPEG` y `AEGS_FFPROBE`. Ejecuta `aegs-capacidades` para
+ver las funciones disponibles sin descargar modelos ni consultar servicios.
+
+La ventana necesita `pip install -e "automontaje[gui]"` y `python interfaz.py`.
+Los subtítulos desde el guion funcionan con la instalación básica. Para
+transcribir la voz real, instala uno de estos extras:
+
+- `pip install -e "automontaje[subtitulos-ligeros]"` usa faster-whisper.
+- `pip install -e "automontaje[subtitulos]"` usa openai-whisper y PyTorch.
+
+La interpretación con IA de órdenes es opcional. Inicia Ollama en tu ordenador,
+instala un modelo y configura `AEGS_MODELO` con su nombre. El botón «Proponer con
+modelo local» consulta `127.0.0.1:11434`; no envía el vídeo. Revisa el contrato
+JSON propuesto antes de pulsar «Ejecutar contrato».
+
 ## Requisitos del Sistema
 
 | Requisito | Versión Mínima | Verificación |

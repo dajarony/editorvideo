@@ -13,6 +13,7 @@ Todas re-codifican a H.264/yuv420p para maxima compatibilidad.
 import os
 import json
 import subprocess
+from .proceso import ejecutar_proceso
 
 from .utilidades import binario, logger
 
@@ -28,7 +29,7 @@ ENCODE_VIDEO = [
 
 def _run(cmd: list, descripcion: str, cwd: str = None) -> None:
     """Ejecuta FFmpeg y lanza excepcion clara si falla."""
-    res = subprocess.run(
+    res = ejecutar_proceso(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore",
         cwd=cwd
     )
@@ -39,7 +40,7 @@ def _run(cmd: list, descripcion: str, cwd: str = None) -> None:
 
 def _info_video(ruta: str) -> tuple:
     """Devuelve (duracion, ancho, alto, fps) de un video."""
-    res = subprocess.run(
+    res = ejecutar_proceso(
         [binario("ffprobe"), "-v", "quiet", "-print_format", "json",
          "-show_format", "-show_streams", ruta],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
@@ -63,7 +64,7 @@ def _info_video(ruta: str) -> tuple:
 
 def _tiene_audio(ruta: str) -> bool:
     """Indica si el video tiene pista de audio."""
-    res = subprocess.run(
+    res = ejecutar_proceso(
         [binario("ffprobe"), "-v", "error", "-select_streams", "a",
          "-show_entries", "stream=codec_type", "-of", "csv=p=0", ruta],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
@@ -86,6 +87,17 @@ def _fuente_sistema() -> str | None:
 
 
 # ─── 1. Cortar fragmento ────────────────────────────────
+
+def tramos_conservados_tras_corte(duracion: float, inicio: float, fin: float) -> list:
+    """Tramos que conserva cortar_fragmento (los trozos de menos de 0,05 s no se conservan)."""
+    inicio, fin = max(0.0, float(inicio)), min(duracion, float(fin))
+    tramos = []
+    if inicio > 0.05:
+        tramos.append((0.0, inicio))
+    if fin < duracion - 0.05:
+        tramos.append((fin, duracion))
+    return tramos
+
 
 def cortar_fragmento(
     ruta_entrada: str,

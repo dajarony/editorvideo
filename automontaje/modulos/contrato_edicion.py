@@ -4,35 +4,66 @@
 La IA no ejecuta FFmpeg ni comandos crudos. Solo puede pedir herramientas
 registradas con parametros validados. El validador maestro normaliza el
 contrato antes de que el ejecutor toque el video.
+
+Tiempos: por defecto ("tiempos": "original") todos los segundos de un contrato se
+refieren al video ORIGINAL. Si un paso quita tiempo (un corte, quitar silencios), los
+pasos siguientes se trasladan al resultado con modulos/tiempos.py. Con
+"tiempos": "resultado" cada paso usa los segundos del video que le llega.
 """
 
 from __future__ import annotations
 
 import copy
+import math
 import os
 import shutil
 import tempfile
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .tiempos import MapaTiempos
+from .proceso import ControlProceso, Cancelado, contexto
+
 
 ParametroSpec = dict[str, Any]
 ValidadorExtra = Callable[[dict[str, Any]], list[str]]
-EjecutorHerramienta = Callable[[str, str, dict[str, Any]], str]
+TIEMPOS_VALIDOS = ("original", "resultado")
+
+
+@dataclass(frozen=True)
+class SalidaPaso:
+    """Resultado de una herramienta que quita tiempo: su salida y los tramos que conserva
+    (en segundos de SU entrada), para trasladar los tiempos de los pasos siguientes."""
+
+    ruta: str
+    conservados: list | None = None
+
+
+EjecutorHerramienta = Callable[[str, str, dict[str, Any]], "str | SalidaPaso"]
 
 
 @dataclass(frozen=True)
 class HerramientaEdicion:
-    """Definicion publica y ejecutable de una herramienta."""
+    """Definicion publica y ejecutable de una herramienta.
+
+    `tiempos` nombra los parametros que son segundos del video: ("inicio", "fin") es un
+    tramo y ("inicio",) un momento. El ejecutor los traslada del original al resultado.
+    """
 
     nombre: str
     descripcion: str
     parametros: dict[str, ParametroSpec]
     ejecutar: EjecutorHerramienta
     validar_extra: ValidadorExtra | None = None
+    tiempos: tuple = ()
 
 
 def _validar_tipo(nombre: str, valor: Any, tipo: str) -> str | None:
+    if tipo in ("int", "float") and (
+        isinstance(valor, bool) or not isinstance(valor, (int, float))
+        or (isinstance(valor, float) and not math.isfinite(valor))
+    ):
+        return f"'{nombre}' debe ser un numero finito, no booleano."
     if tipo == "bool" and not isinstance(valor, bool):
         return f"'{nombre}' debe ser booleano."
     if tipo == "str" and not isinstance(valor, str):
@@ -105,15 +136,16 @@ def _normalizar_parametros(
     return normalizados, errores
 
 
-def _ejecutar_cortar_silencios(entrada: str, salida: str, params: dict[str, Any]) -> str:
-    from .mejoras import cortar_silencios
+def _ejecutar_cortar_silencios(entrada: str, salida: str, params: dict[str, Any]) -> SalidaPaso:
+    from .mejoras import recortar_silencios
 
-    return cortar_silencios(
+    ruta, conservados = recortar_silencios(
         entrada,
         salida,
         umbral_db=params["umbral_db"],
         duracion_min=params["duracion_min"],
     )
+    return SalidaPaso(ruta, conservados)
 
 
 def _ejecutar_color_grading(entrada: str, salida: str, params: dict[str, Any]) -> str:
@@ -131,7 +163,20 @@ def _ejecutar_mejora_real(entrada: str, salida: str, params: dict[str, Any]) -> 
 def _ejecutar_vertical(entrada: str, salida: str, params: dict[str, Any]) -> str:
     from .mejoras import convertir_vertical_9_16
 
-    return convertir_vertical_9_16(entrada, salida)
+    return convertir_vertical_9_16(entrada, salida, encuadre=params["encuadre"])
+
+
+def _ejecutar_muletillas(entrada: str, salida: str, params: dict[str, Any]) -> SalidaPaso:
+    from .mejoras import recortar_muletillas
+
+    ruta, conservados = recortar_muletillas(entrada, salida, idioma=params["idioma"])
+    return SalidaPaso(ruta, conservados)
+
+
+def _ejecutar_superresolucion(entrada: str, salida: str, params: dict[str, Any]) -> str:
+    from .superresolucion import ampliar_con_ia
+
+    return ampliar_con_ia(entrada, salida, modelo=params["modelo"])
 
 
 def _ejecutar_subtitulos(entrada: str, salida: str, params: dict[str, Any]) -> str:
@@ -162,10 +207,12 @@ def _ejecutar_fades_audio(entrada: str, salida: str, params: dict[str, Any]) -> 
 
 # ─── Efectos por momento concreto ───────────────────────
 
-def _ejecutar_corte(entrada: str, salida: str, params: dict[str, Any]) -> str:
-    from .efectos import cortar_fragmento
+def _ejecutar_corte(entrada: str, salida: str, params: dict[str, Any]) -> SalidaPaso:
+    from .efectos import _info_video, cortar_fragmento, tramos_conservados_tras_corte
 
-    return cortar_fragmento(entrada, salida, inicio=params["inicio"], fin=params["fin"])
+    duracion = _info_video(entrada)[0]
+    ruta = cortar_fragmento(entrada, salida, inicio=params["inicio"], fin=params["fin"])
+    return SalidaPaso(ruta, tramos_conservados_tras_corte(duracion, params["inicio"], params["fin"]))
 
 
 def _ejecutar_texto(entrada: str, salida: str, params: dict[str, Any]) -> str:
@@ -251,10 +298,24 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
         },
         ejecutar=_ejecutar_mejora_real,
     ),
+    "eliminar_muletillas": HerramientaEdicion(
+        nombre="eliminar_muletillas",
+        descripcion="Quita muletillas (eh, umm, este...) cortando imagen y audio a la vez.",
+        parametros={
+            "idioma": {"type": "str", "default": "es", "choices": ["es", "en"]},
+        },
+        ejecutar=_ejecutar_muletillas,
+    ),
     "vertical_9_16": HerramientaEdicion(
         nombre="vertical_9_16",
         descripcion="Convierte el video a formato vertical 9:16.",
-        parametros={},
+        parametros={
+            "encuadre": {
+                "type": "str",
+                "default": "centro",
+                "choices": ["centro", "izquierda", "derecha", "completo"],
+            },
+        },
         ejecutar=_ejecutar_vertical,
     ),
     "subtitulos": HerramientaEdicion(
@@ -290,6 +351,18 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
         },
         ejecutar=_ejecutar_fades_audio,
     ),
+    "superresolucion_ia": HerramientaEdicion(
+        nombre="superresolucion_ia",
+        descripcion="Amplia x4 con IA (Real-ESRGAN); lento en videos.",
+        parametros={
+            "modelo": {
+                "type": "str",
+                "default": "realesrgan-x4plus",
+                "choices": ["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesrnet-x4plus"],
+            },
+        },
+        ejecutar=_ejecutar_superresolucion,
+    ),
     "corte": HerramientaEdicion(
         nombre="corte",
         descripcion="Quita un tramo del video entre 'inicio' y 'fin' (segundos).",
@@ -299,6 +372,7 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
         },
         ejecutar=_ejecutar_corte,
         validar_extra=_validar_corte,
+        tiempos=("inicio", "fin"),
     ),
     "texto": HerramientaEdicion(
         nombre="texto",
@@ -313,6 +387,7 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
             },
         },
         ejecutar=_ejecutar_texto,
+        tiempos=("inicio",),
     ),
     "imagen": HerramientaEdicion(
         nombre="imagen",
@@ -330,6 +405,7 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
         },
         ejecutar=_ejecutar_imagen,
         validar_extra=_validar_imagen,
+        tiempos=("inicio",),
     ),
     "zoom": HerramientaEdicion(
         nombre="zoom",
@@ -343,6 +419,7 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
             },
         },
         ejecutar=_ejecutar_zoom,
+        tiempos=("inicio",),
     ),
 }
 
@@ -409,10 +486,15 @@ def validar_contrato_herramientas(contrato: dict[str, Any]) -> dict[str, Any]:
     if len(pasos) > 30:
         avisos.append("El contrato tiene mas de 30 pasos; revisa si es necesario.")
 
+    tiempos = contrato.get("tiempos", "original")
+    if tiempos not in TIEMPOS_VALIDOS:
+        errores.append(f"'tiempos' debe ser uno de: {', '.join(TIEMPOS_VALIDOS)}.")
+
     normalizado = None
     if not errores:
         normalizado = {
             "version": str(contrato.get("version", "1.0")),
+            "tiempos": tiempos,
             "herramientas": pasos,
         }
 
@@ -424,12 +506,83 @@ def validar_contrato_herramientas(contrato: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _segundos_legibles(t: float) -> str:
+    return f"{t:g}" if abs(t - round(t)) < 1e-9 else f"{t:.2f}"
+
+
+def _trasladar_tiempos(
+    herramienta: HerramientaEdicion, params: dict[str, Any], mapa: MapaTiempos, avisos: list[str]
+) -> dict[str, Any] | None:
+    """Parametros con los segundos del original trasladados al video que llega a este paso.
+
+    Devuelve None si el paso ya no tiene sentido (corta un tramo que otro paso quito entero).
+    """
+    if not herramienta.tiempos:
+        return params
+    nuevos = dict(params)
+    if herramienta.tiempos == ("inicio", "fin"):
+        tramo = mapa.llevar_tramo(params["inicio"], params["fin"])
+        if tramo is None:
+            avisos.append(
+                f"{herramienta.nombre}: el tramo {_segundos_legibles(params['inicio'])}–"
+                f"{_segundos_legibles(params['fin'])} s del original ya se habia quitado; se omite."
+            )
+            return None
+        nuevos["inicio"], nuevos["fin"] = round(tramo[0], 3), round(tramo[1], 3)
+        return nuevos
+    if herramienta.tiempos == ("inicio",) and "duracion" in params:
+        _, inicio_quitado = mapa.llevar(params["inicio"])
+        tramo = mapa.llevar_tramo(params["inicio"], params["inicio"] + params["duracion"])
+        if tramo is None:
+            avisos.append(f"{herramienta.nombre}: el intervalo ya no existe; se omite.")
+            return None
+        nuevos["inicio"] = round(tramo[0], 3)
+        nuevos["duracion"] = round(tramo[1] - tramo[0], 3)
+        if inicio_quitado:
+            avisos.append(f"{herramienta.nombre}: el segundo {_segundos_legibles(params['inicio'])} "
+                          "del original se habia quitado; se usa el siguiente momento que queda.")
+        return nuevos
+    for clave in herramienta.tiempos:
+        t, quitado = mapa.llevar(params[clave])
+        if quitado:
+            avisos.append(
+                f"{herramienta.nombre}: el segundo {_segundos_legibles(params[clave])} del original "
+                f"se habia quitado; se usa el siguiente momento que queda."
+            )
+        nuevos[clave] = round(t, 3)
+    return nuevos
+
+
 def ejecutar_contrato_herramientas(
     ruta_entrada: str,
     ruta_salida: str,
     contrato: dict[str, Any],
+    al_progresar: Callable[[float, str], None] | None = None,
+    mapa_inicial: MapaTiempos | None = None,
+    control: ControlProceso | None = None,
 ) -> dict[str, Any]:
-    """Valida y ejecuta un contrato herramienta por herramienta."""
+    """Ejecuta un trabajo aislado; conserva la salida anterior ante error o cancelacion."""
+    try:
+        if os.path.normcase(os.path.realpath(ruta_entrada)) == os.path.normcase(os.path.realpath(ruta_salida)):
+            raise ValueError("La salida debe ser distinta del archivo original.")
+        with contexto(control):
+            return _ejecutar_contrato(ruta_entrada, ruta_salida, contrato, al_progresar,
+                                     mapa_inicial, control)
+    except Cancelado as exc:
+        return {"exito": False, "cancelado": True, "errores": [str(exc)], "avisos": []}
+    except (OSError, ValueError) as exc:
+        return {"exito": False, "errores": [str(exc)], "avisos": []}
+
+
+def _ejecutar_contrato(
+    ruta_entrada, ruta_salida, contrato, al_progresar, mapa_inicial, control,
+) -> dict[str, Any]:
+    """Valida y ejecuta un contrato herramienta por herramienta.
+
+    `al_progresar(fraccion, texto)` informa del avance (0..1). `mapa_inicial` sirve para
+    ejecutar el contrato sobre un extracto del original (la previsualizacion): sus tiempos
+    siguen siendo los del original completo.
+    """
     if not os.path.exists(ruta_entrada):
         return {
             "exito": False,
@@ -447,56 +600,90 @@ def ejecutar_contrato_herramientas(
 
     contrato_ok = validacion["contrato"]
     pasos = contrato_ok["herramientas"]
+    avisos = list(validacion["avisos"])
     os.makedirs(os.path.dirname(os.path.abspath(ruta_salida)) or ".", exist_ok=True)
-
-    if not pasos:
-        shutil.copy2(ruta_entrada, ruta_salida)
-        return {
-            "exito": True,
-            "archivo": ruta_salida,
-            "contrato": contrato_ok,
-            "avisos": validacion["avisos"],
-        }
+    progresar = al_progresar or (lambda fraccion, texto: None)
 
     _, ext = os.path.splitext(ruta_salida)
     ext = ext or os.path.splitext(ruta_entrada)[1] or ".mp4"
 
+    # Sin una duracion conocida basta un mapa sin final: lo que cuenta son los tramos quitados.
+    mapa = None
+    if contrato_ok["tiempos"] == "original":
+        mapa = mapa_inicial or MapaTiempos.identidad(math.inf)
+
     actual = ruta_entrada
-    ejecutados = []
+    ejecutados: list[str] = []
+    omitidos: list[str] = []
     with tempfile.TemporaryDirectory(prefix="aegs_tools_") as tmpdir:
         for idx, paso in enumerate(pasos, 1):
+            if control:
+                control.comprobar()
             nombre = paso["herramienta"]
             herramienta = REGISTRO_HERRAMIENTAS[nombre]
-            salida_paso = (
-                ruta_salida if idx == len(pasos)
-                else os.path.join(tmpdir, f"paso_{idx:03d}_{nombre}{ext}")
-            )
+            params = paso["parametros"]
+            if mapa is not None:
+                params = _trasladar_tiempos(herramienta, params, mapa, avisos)
+                if params is None:
+                    omitidos.append(nombre)
+                    continue
+            progresar((idx - 1) / len(pasos), f"Paso {idx}/{len(pasos)}: {herramienta.descripcion}")
+            if control:
+                control.indice, control.total = idx - 1, len(pasos)
+                control.texto = herramienta.descripcion
+                from .efectos import _info_video
+                control.duracion = _info_video(actual)[0]
+            salida_paso = os.path.join(tmpdir, f"paso_{idx:03d}_{nombre}{ext}")
             try:
-                resultado = herramienta.ejecutar(actual, salida_paso, paso["parametros"])
+                resultado = herramienta.ejecutar(actual, salida_paso, params)
+                if control:
+                    control.comprobar()
+            except Cancelado:
+                raise
             except Exception as exc:
                 return {
                     "exito": False,
                     "errores": [f"{nombre} fallo: {exc}"],
-                    "avisos": validacion["avisos"],
+                    "avisos": avisos,
                     "pasos_ejecutados": ejecutados,
                 }
 
+            conservados = None
+            if isinstance(resultado, SalidaPaso):
+                resultado, conservados = resultado.ruta, resultado.conservados
             if not os.path.exists(resultado):
                 return {
                     "exito": False,
                     "errores": [f"{nombre} no genero salida: {resultado}"],
-                    "avisos": validacion["avisos"],
+                    "avisos": avisos,
                     "pasos_ejecutados": ejecutados,
                 }
 
+            if mapa is not None and conservados is not None:
+                mapa = mapa.tras_conservar(conservados)
             actual = resultado
             ejecutados.append(nombre)
 
+        # Publicar de una vez, en el mismo volumen que el destino.
+        fd, provisional = tempfile.mkstemp(prefix=".aegs_", suffix=ext,
+                                           dir=os.path.dirname(os.path.abspath(ruta_salida)))
+        os.close(fd)
+        try:
+            shutil.copy2(actual, provisional)
+            if control:
+                control.comprobar()
+            os.replace(provisional, ruta_salida)
+        finally:
+            if os.path.exists(provisional):
+                os.remove(provisional)
+
+    progresar(1.0, "Listo")
     return {
         "exito": True,
         "archivo": ruta_salida,
         "contrato": contrato_ok,
-        "avisos": validacion["avisos"],
+        "avisos": avisos,
         "pasos_ejecutados": ejecutados,
+        "pasos_omitidos": omitidos,
     }
 

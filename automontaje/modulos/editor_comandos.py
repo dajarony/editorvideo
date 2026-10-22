@@ -20,6 +20,7 @@ class ConfigEdicion:
     mejora_real: bool = True
     nivel_mejora: str = "media"
     formato_vertical: bool = False
+    encuadre_vertical: str = "centro"
     subtitulos: bool = False
     limpiar_voz: bool = False
     nivel_voz: str = "media"
@@ -44,13 +45,22 @@ def parsear_comando_edicion(texto: str) -> dict:
         cfg.cortar_silencios = False
         acciones.append("mantener silencios")
 
-    if any(p in t for p in ("muletilla", "eh", "umm", "mmm", "relleno")):
+    if re.search(r"\b(?:muletillas?|eh|umm|mmm|relleno)\b", t):
         cfg.eliminar_muletillas = True
         acciones.append("eliminar muletillas")
 
     if any(p in t for p in ("vertical", "tiktok", "reels", "shorts", "9:16", "9/16")):
         cfg.formato_vertical = True
-        acciones.append("formato vertical 9:16")
+        if any(p in t for p in ("sin recortar", "completo", "entero", "sin cortar", "que se vea todo")):
+            cfg.encuadre_vertical = "completo"
+        elif "izquierda" in t:
+            cfg.encuadre_vertical = "izquierda"
+        elif "derecha" in t:
+            cfg.encuadre_vertical = "derecha"
+        acciones.append(
+            "formato vertical 9:16"
+            + ("" if cfg.encuadre_vertical == "centro" else f" ({cfg.encuadre_vertical})")
+        )
 
     if any(p in t for p in ("quita ruido", "quitar ruido", "sin ruido", "limpia la voz",
                             "limpiar voz", "limpia el audio", "limpiar audio",
@@ -83,7 +93,7 @@ def parsear_comando_edicion(texto: str) -> dict:
     if any(p in t for p in ("sin mejorar", "no mejores", "original")):
         cfg.mejora_real = False
         acciones.append("sin mejora visual")
-    if any(p in t for p in ("mejora", "nitid", "calidad", "brillo", "claro", "vivo", "color")):
+    elif any(p in t for p in ("mejora", "nitid", "calidad", "brillo", "claro", "vivo", "color")):
         cfg.mejora_real = True
         acciones.append("mejora visual real")
 
@@ -120,6 +130,19 @@ def parsear_comando_edicion(texto: str) -> dict:
 
     if any(p in t for p in ("anime", "dibujo", "animacion", "animación")):
         cfg.modelo_esrgan = "realesrgan-x4plus-anime"
+
+    # Las negaciones de una accion prevalecen sobre su palabra clave.
+    negaciones = [
+        (r"\b(?:no\s+(?:(?:lo|los|las|la)\s+)?(?:hagas?|pongas?|conviertas?|quiero)\s+(?:en\s+)?|sin\s+)(?:vertical|reels|tiktok|9:16)", "formato_vertical", "formato vertical", "mantener formato original"),
+        (r"\bno\s+(?:quites?|elimines?|cortes?)\s+(?:los\s+)?silencios", "cortar_silencios", "cortar silencios", "mantener silencios"),
+        (r"\bno\s+(?:quites?|elimines?)\s+(?:las\s+)?muletillas", "eliminar_muletillas", "eliminar muletillas", "mantener muletillas"),
+        (r"\bno\s+(?:pongas?|anadas?|añadas?|quiero)\s+(?:los\s+)?subt[ií]tulos", "subtitulos", "subtitulos automaticos", "sin subtitulos"),
+    ]
+    for patron, atributo, prefijo, descripcion in negaciones:
+        if re.search(patron, t):
+            setattr(cfg, atributo, False)
+            acciones = [a for a in acciones if not a.startswith(prefijo)]
+            acciones.append(descripcion)
 
     if not acciones:
         acciones.append("mejora visual real")

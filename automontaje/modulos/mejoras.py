@@ -5,13 +5,13 @@ SUME DOCBLOCK v2.0
 ═══════════════════════════════════════════════════════════
 Archivo: modulos/mejoras.py
 Tipo: Postproducción → Mejoras Automáticas (Módulo 5)
-Dependencias: os, re, json, subprocess, whisper (opcional)
+Dependencias: os, re, json, subprocess, transcripcion (faster-whisper u openai-whisper, opcional)
 
 Entradas:
 - Ruta a cualquier archivo de vídeo .mp4
 
 Acciones:
-1. Elimina silencios largos (FFmpeg silenceremove)
+1. Elimina silencios largos (FFmpeg silencedetect; mismos cortes en imagen y audio)
 2. Elimina muletillas: umm, eh, este... (Whisper word timestamps)
 3. Color grading cinematográfico (FFmpeg curves + eq)
 4. Fades de audio en inicio/fin (30ms, FFmpeg afade)
@@ -26,6 +26,7 @@ import os
 import json
 import shutil
 import subprocess
+from .proceso import ejecutar_proceso
 import tempfile
 import importlib.util
 from .utilidades import binario, logger
@@ -68,14 +69,14 @@ ESTILOS_COLOR = {
 def _duracion_video(ruta: str) -> float:
     """Devuelve la duración en segundos de un vídeo."""
     cmd = [binario("ffprobe"), "-v", "quiet", "-print_format", "json", "-show_format", ruta]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = ejecutar_proceso(cmd, capture_output=True, text=True)
     info = json.loads(res.stdout)
     return float(info["format"]["duration"])
 
 
 def _run_ffmpeg(cmd: list, descripcion: str):
     """Ejecuta FFmpeg y lanza excepción si falla."""
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    resultado = ejecutar_proceso(cmd, capture_output=True, text=True)
     if resultado.returncode != 0:
         raise RuntimeError(f"FFmpeg falló en '{descripcion}':\n{resultado.stderr[-800:]}")
 
@@ -92,7 +93,7 @@ def _brillo_medio(ruta: str) -> float | None:
         "fps=1,scale=320:-1:force_original_aspect_ratio=decrease,"
         "signalstats,metadata=print:key=lavfi.signalstats.YAVG"
     )
-    res = subprocess.run(
+    res = ejecutar_proceso(
         [binario("ffmpeg"), "-i", ruta, "-vf", filtro, "-frames:v", "8", "-f", "null", "-"],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
     )
@@ -155,68 +156,135 @@ def _proteger_brillo_original(ruta_referencia: str, ruta_salida: str) -> None:
                 pass
 
 
+def _silencios_detectados(registro: str, duracion_total: float) -> list:
+    """Tramos (inicio, fin) que silencedetect anotó en su registro.
+
+    Un silencio que llega hasta el final no tiene `silence_end`: termina en `duracion_total`.
+    """
+    silencios, inicio = [], None
+    for linea in registro.splitlines():
+        if "silence_start:" in linea:
+            inicio = float(linea.split("silence_start:")[1].split()[0])
+        elif "silence_end:" in linea and inicio is not None:
+            silencios.append((inicio, float(linea.split("silence_end:")[1].split()[0])))
+            inicio = None
+    if inicio is not None:
+        silencios.append((inicio, duracion_total))
+    return silencios
+
+
+def _tramos_sin_silencio(silencios: list, duracion_total: float, margen: float = 0.15) -> list:
+    """Tramos a conservar: todo menos cada silencio, dejando `margen` s de él a cada lado
+    para que la voz no empiece ni termine de golpe."""
+    mantener, cursor = [], 0.0
+    for inicio, fin in sorted(silencios):
+        corte_inicio, corte_fin = max(inicio + margen, cursor), fin - margen
+        if corte_fin <= corte_inicio:
+            continue
+        if corte_inicio > cursor:
+            mantener.append((round(cursor, 4), round(corte_inicio, 4)))
+        cursor = corte_fin
+    if cursor < duracion_total:
+        mantener.append((round(cursor, 4), round(duracion_total, 4)))
+    return mantener
+
+
+def _recortar_tramos(ruta_entrada: str, ruta_salida: str, mantener: list, descripcion: str) -> None:
+    """Conserva solo `mantener` en la imagen Y en el sonido, con los mismos cortes, para que no se desincronicen."""
+    expr = "+".join(f"between(t,{i:.3f},{f:.3f})" for i, f in mantener)
+    _run_ffmpeg([
+        binario("ffmpeg"), "-y", "-i", ruta_entrada,
+        "-vf", f"select='{expr}',setpts=N/FRAME_RATE/TB",
+        "-af", f"aselect='{expr}',asetpts=N/SR/TB",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
+        "-movflags", "+faststart",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+        ruta_salida
+    ], descripcion)
+
+
+def recortar_silencios(
+    ruta_entrada: str,
+    ruta_salida: str,
+    umbral_db: float = -35.0,
+    duracion_min: float = 0.6
+) -> tuple:
+    """Elimina los silencios largos cortando los mismos tramos en la imagen y en el audio.
+
+    Devuelve (ruta_salida, tramos conservados en segundos de la entrada), para que quien
+    encadene más ediciones sepa dónde ha ido a parar cada momento (modulos/tiempos.py).
+    """
+    logger.info(f"  ✂  Eliminando silencios (umbral={umbral_db}dB, min={duracion_min}s)...")
+    duracion_total = _duracion_video(ruta_entrada)
+    todo = [(0.0, round(duracion_total, 4))]
+    if not _tiene_audio(ruta_entrada):
+        logger.info("  ✅ El vídeo no tiene audio: no hay silencios que quitar.")
+        shutil.copy2(ruta_entrada, ruta_salida)
+        return ruta_salida, todo
+
+    registro = ejecutar_proceso(
+        [binario("ffmpeg"), "-hide_banner", "-nostats", "-i", ruta_entrada,
+         "-af", f"silencedetect=noise={umbral_db}dB:d={duracion_min}", "-f", "null", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="ignore"
+    ).stderr
+    mantener = _tramos_sin_silencio(_silencios_detectados(registro, duracion_total), duracion_total)
+
+    if not mantener or mantener == todo:
+        logger.info("  ✅ No hay silencios largos que quitar.")
+        shutil.copy2(ruta_entrada, ruta_salida)
+        return ruta_salida, todo
+
+    _recortar_tramos(ruta_entrada, ruta_salida, mantener, "cortar_silencios")
+    logger.info(f"  ✅ Silencios eliminados → {os.path.basename(ruta_salida)}")
+    return ruta_salida, mantener
+
+
 def cortar_silencios(
     ruta_entrada: str,
     ruta_salida: str,
     umbral_db: float = -35.0,
     duracion_min: float = 0.6
 ) -> str:
-    """Elimina silencios largos del vídeo con FFmpeg silenceremove."""
-    logger.info(f"  ✂  Eliminando silencios (umbral={umbral_db}dB, min={duracion_min}s)...")
-    filtro = (
-        f"silenceremove=stop_periods=-1:"
-        f"stop_duration={duracion_min}:"
-        f"stop_threshold={umbral_db}dB"
-    )
-    _run_ffmpeg([
-        binario("ffmpeg"), "-y", "-i", ruta_entrada,
-        "-af", filtro,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
-        "-movflags", "+faststart",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-        ruta_salida
-    ], "cortar_silencios")
-    logger.info(f"  ✅ Silencios eliminados → {os.path.basename(ruta_salida)}")
-    return ruta_salida
+    """Elimina los silencios largos del vídeo, cortando los mismos tramos en la imagen y en el audio."""
+    return recortar_silencios(ruta_entrada, ruta_salida, umbral_db, duracion_min)[0]
 
 
 # ─── Paso 2: Eliminar muletillas ────────────────────────
 
-def eliminar_muletillas(
+def recortar_muletillas(
     ruta_entrada: str,
     ruta_salida: str,
     idioma: str = "es"
-) -> str:
-    """Detecta y elimina muletillas usando Whisper word timestamps."""
-    try:
-        import whisper
-    except ImportError:
-        logger.warning("  ⚠  Whisper no instalado. Omitiendo muletillas.")
+) -> tuple:
+    """Detecta y elimina muletillas usando Whisper word timestamps.
+
+    Devuelve (ruta_salida, tramos conservados en segundos de la entrada).
+    """
+    duracion_total = _duracion_video(ruta_entrada)
+    todo = [(0.0, round(duracion_total, 4))]
+    from .transcripcion import motor_disponible, transcribir
+
+    if motor_disponible() is None:
+        logger.warning("  ⚠  No hay motor de transcripción (faster-whisper u openai-whisper). Omitiendo muletillas.")
         shutil.copy2(ruta_entrada, ruta_salida)
-        return ruta_salida
+        return ruta_salida, todo
 
     palabras_filler = MULETILLAS.get(idioma, MULETILLAS["es"])
-    logger.info(f"  🎙  Transcribiendo con Whisper para detectar muletillas...")
-
-    modelo = whisper.load_model("base")
-    resultado = modelo.transcribe(ruta_entrada, language=idioma, word_timestamps=True)
+    logger.info(f"  🎙  Transcribiendo para detectar muletillas...")
 
     cortes = []
-    for seg in resultado.get("segments", []):
-        for palabra in seg.get("words", []):
-            texto = palabra["word"].strip().lower().rstrip(".,!?")
-            if texto in palabras_filler:
-                cortes.append((float(palabra["start"]), float(palabra["end"])))
+    for segmento in transcribir(ruta_entrada, idioma, "base", palabras=True):
+        for inicio, fin, palabra in segmento.palabras:
+            if palabra.lower().rstrip(".,!?") in palabras_filler:
+                cortes.append((inicio, fin))
 
     if not cortes:
         logger.info("  ✅ No se detectaron muletillas.")
         shutil.copy2(ruta_entrada, ruta_salida)
-        return ruta_salida
+        return ruta_salida, todo
 
     logger.info(f"  ✂  Eliminando {len(cortes)} muletillas...")
-    duracion_total = _duracion_video(ruta_entrada)
-
     mantener = []
     ultimo_fin = 0.0
     for inicio, fin in sorted(cortes):
@@ -228,21 +296,20 @@ def eliminar_muletillas(
 
     if not mantener:
         shutil.copy2(ruta_entrada, ruta_salida)
-        return ruta_salida
+        return ruta_salida, todo
 
-    expr = "+".join(f"between(t,{i:.3f},{f:.3f})" for i, f in mantener)
-    _run_ffmpeg([
-        binario("ffmpeg"), "-y", "-i", ruta_entrada,
-        "-vf", f"select='{expr}',setpts=N/FRAME_RATE/TB",
-        "-af", f"aselect='{expr}',asetpts=N/SR/TB",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
-        "-movflags", "+faststart",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-        ruta_salida
-    ], "eliminar_muletillas")
+    _recortar_tramos(ruta_entrada, ruta_salida, mantener, "eliminar_muletillas")
     logger.info(f"  ✅ Muletillas eliminadas → {os.path.basename(ruta_salida)}")
-    return ruta_salida
+    return ruta_salida, mantener
+
+
+def eliminar_muletillas(
+    ruta_entrada: str,
+    ruta_salida: str,
+    idioma: str = "es"
+) -> str:
+    """Detecta y elimina muletillas usando Whisper word timestamps."""
+    return recortar_muletillas(ruta_entrada, ruta_salida, idioma)[0]
 
 
 # ─── Paso 3: Color grading ───────────────────────────────
@@ -299,16 +366,40 @@ def anadir_audio_fades(
 
 # ─── Mejora real (FFmpeg, sin IA) ───────────────────────
 
-def convertir_vertical_9_16(ruta_entrada: str, ruta_salida: str) -> str:
-    """Convierte un video a formato vertical 1080x1920 con recorte centrado."""
-    logger.info("  Convirtiendo a formato vertical 9:16...")
-    filtro = (
+# Dónde se coloca el recorte de 1080 px de ancho dentro del vídeo escalado a 1920 de alto.
+ENCUADRES_VERTICALES = {"izquierda": 0.0, "centro": 0.5, "derecha": 1.0}
+
+
+def _filtro_vertical(encuadre: str) -> str:
+    if encuadre == "completo":
+        # Todo el vídeo cabe, centrado, sobre una copia ampliada y desenfocada que rellena el 9:16.
+        return (
+            "split[fondo][frente];"
+            "[fondo]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+            "boxblur=30:2,eq=brightness=-0.08[fondo];"
+            "[frente]scale=1080:1920:force_original_aspect_ratio=decrease[frente];"
+            "[fondo][frente]overlay=(W-w)/2:(H-h)/2,setsar=1"
+        )
+    if encuadre not in ENCUADRES_VERTICALES:
+        raise ValueError(f"Encuadre vertical desconocido: {encuadre}")
+    x = ENCUADRES_VERTICALES[encuadre]
+    return (
         "scale='if(gt(a,9/16),-2,1080)':'if(gt(a,9/16),1920,-2)',"
-        "crop=1080:1920:(iw-1080)/2:(ih-1920)/2,setsar=1"
+        f"crop=1080:1920:(iw-1080)*{x}:(ih-1920)/2,setsar=1"
     )
+
+
+def convertir_vertical_9_16(ruta_entrada: str, ruta_salida: str, encuadre: str = "centro") -> str:
+    """Convierte un video a formato vertical 1080x1920.
+
+    encuadre: "centro", "izquierda" o "derecha" eligen qué parte del ancho se conserva
+    (para no cortar a una persona situada a un lado); "completo" no recorta nada y
+    rellena el resto con el propio vídeo desenfocado.
+    """
+    logger.info(f"  Convirtiendo a formato vertical 9:16 (encuadre: {encuadre})...")
     _run_ffmpeg([
         binario("ffmpeg"), "-y", "-i", ruta_entrada,
-        "-vf", filtro,
+        "-vf", _filtro_vertical(encuadre),
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
         "-movflags", "+faststart",
@@ -331,42 +422,10 @@ def _segundos_a_srt(segundos: float) -> str:
 
 
 def _transcribir_segmentos(ruta: str, idioma: str, modelo_whisper: str) -> list:
-    """Transcribe audio/video y devuelve lista de (inicio, fin, texto).
+    """Transcribe audio/video y devuelve lista de (inicio, fin, texto) con el motor único."""
+    from .transcripcion import transcribir
 
-    Usa faster-whisper si esta disponible (ligero y rapido);
-    si no, recurre a openai-whisper.
-    """
-    # faster-whisper — preferido (ligero, rapido, sin PyTorch)
-    try:
-        from faster_whisper import WhisperModel
-        logger.info(f"  🎙  Transcribiendo con faster-whisper (modelo={modelo_whisper})...")
-        modelo = WhisperModel(modelo_whisper, device="cpu", compute_type="int8")
-        segmentos, _info = modelo.transcribe(ruta, language=idioma)
-        return [
-            (float(s.start), float(s.end), s.text.strip())
-            for s in segmentos if s.text and s.text.strip()
-        ]
-    except ImportError:
-        pass
-
-    # openai-whisper — alternativa
-    try:
-        import whisper
-        logger.info(f"  🎙  Transcribiendo con openai-whisper (modelo={modelo_whisper})...")
-        modelo = whisper.load_model(modelo_whisper)
-        resultado = modelo.transcribe(ruta, language=idioma)
-        return [
-            (float(s["start"]), float(s["end"]), s["text"].strip())
-            for s in resultado.get("segments", [])
-            if s.get("text", "").strip()
-        ]
-    except ImportError:
-        pass
-
-    raise RuntimeError(
-        "No hay motor de transcripcion instalado.\n"
-        "Instala uno con: pip install faster-whisper"
-    )
+    return [(s.inicio, s.fin, s.texto) for s in transcribir(ruta, idioma, modelo_whisper)]
 
 
 def anadir_subtitulos_automaticos(
@@ -425,7 +484,7 @@ def anadir_subtitulos_automaticos(
         "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
         os.path.abspath(ruta_salida)
     ]
-    resultado_ff = subprocess.run(
+    resultado_ff = ejecutar_proceso(
         cmd, cwd=carpeta, capture_output=True, text=True,
         encoding="utf-8", errors="ignore"
     )
@@ -471,7 +530,7 @@ FILTROS_LIMPIAR_VOZ = {
 
 def _tiene_audio(ruta: str) -> bool:
     """Indica si el archivo tiene al menos una pista de audio."""
-    res = subprocess.run(
+    res = ejecutar_proceso(
         [binario("ffprobe"), "-v", "error", "-select_streams", "a",
          "-show_entries", "stream=codec_type", "-of", "csv=p=0", ruta],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
@@ -742,11 +801,10 @@ def aplicar_todas_mejoras(
 ) -> dict:
     """Aplica todas las mejoras en cadena sobre un vídeo.
 
-    Pipeline:
-        1. Cortar silencios (FFmpeg)
-        2. Eliminar muletillas (Whisper, opcional)
-        3. Color grading cinematográfico (FFmpeg)
-        4. Fades de audio 30ms (FFmpeg)
+    Convierte las opciones en un contrato de herramientas y lo ejecuta con el mismo
+    ejecutor que la interfaz y los contratos (modulos/servicio_edicion.py). Orden:
+    silencios, muletillas, color, mejora real, vertical, voz, subtítulos, fades de audio
+    y super resolución.
 
     Args:
         ruta_entrada: Ruta al vídeo original.
@@ -775,76 +833,17 @@ def aplicar_todas_mejoras(
         **(config or {}),
     }
 
-    carpeta = os.path.dirname(ruta_salida) or "."
-    base    = os.path.splitext(os.path.basename(ruta_entrada))[0]
-    temps   = []
-    pasos   = []
+    from .servicio_edicion import procesar
 
-    def _temp(sufijo):
-        p = os.path.join(carpeta, f"_tmp_{sufijo}_{base}.mp4")
-        temps.append(p)
-        return p
-
-    try:
-        actual = ruta_entrada
-        logger.info("=" * 55)
-        logger.info("MÓDULO 5 — Mejoras Automáticas de Vídeo")
-        logger.info("=" * 55)
-
-        if cfg["cortar_silencios"]:
-            actual = cortar_silencios(
-                actual, _temp("sil"),
-                umbral_db=cfg["umbral_silencio_db"],
-                duracion_min=cfg["duracion_silencio_s"]
-            )
-            pasos.append("silencios")
-
-        if cfg["eliminar_muletillas"]:
-            actual = eliminar_muletillas(actual, _temp("mul"), idioma=cfg["idioma"])
-            pasos.append("muletillas")
-
-        if cfg["color_grading"]:
-            actual = aplicar_color_grading(actual, _temp("col"), estilo=cfg["estilo_color"])
-            pasos.append("color_grading")
-
-        if cfg["mejora_real"]:
-            actual = mejorar_imagen_real(actual, _temp("real"), nivel=cfg["nivel_mejora"])
-            pasos.append("mejora_real")
-
-        if cfg["formato_vertical"]:
-            actual = convertir_vertical_9_16(actual, _temp("vertical"))
-            pasos.append("vertical_9_16")
-
-        if cfg["limpiar_voz"]:
-            actual = limpiar_voz(actual, _temp("voz"), nivel=cfg["nivel_voz"])
-            pasos.append("limpiar_voz")
-
-        if cfg["subtitulos"]:
-            actual = anadir_subtitulos_automaticos(
-                actual, _temp("subs"), idioma=cfg["idioma"]
-            )
-            pasos.append("subtitulos")
-
-        if cfg["audio_fades"]:
-            actual = anadir_audio_fades(actual, ruta_salida, duracion_fade=cfg["duracion_fade"])
-            pasos.append("audio_fades")
-        else:
-            shutil.copy2(actual, ruta_salida)
-
-        logger.info("=" * 55)
-        logger.info(f"✅ Pipeline completado: {', '.join(pasos)}")
-        logger.info(f"   Salida → {ruta_salida}")
-        logger.info("=" * 55)
-        return {"exito": True, "archivo": ruta_salida, "pasos": pasos}
-
-    except Exception as e:
-        logger.error(f"❌ Error en Módulo 5: {e}")
-        return {"exito": False, "error": str(e), "pasos": pasos}
-
-    finally:
-        for t in temps:
-            if os.path.exists(t):
-                try:
-                    os.remove(t)
-                except OSError:
-                    pass
+    logger.info("=" * 55)
+    logger.info("MÓDULO 5 — Mejoras Automáticas de Vídeo")
+    logger.info("=" * 55)
+    resultado = procesar(ruta_entrada, ruta_salida, cfg)
+    if not resultado["exito"]:
+        error = "; ".join(resultado.get("errores", [])) or "error desconocido"
+        logger.error(f"❌ Error en Módulo 5: {error}")
+        return {"exito": False, "error": error, "pasos": resultado.get("pasos_ejecutados", [])}
+    pasos = resultado.get("pasos_ejecutados", [])
+    logger.info(f"✅ Pipeline completado: {', '.join(pasos)}")
+    logger.info(f"   Salida → {ruta_salida}")
+    return {"exito": True, "archivo": ruta_salida, "pasos": pasos}

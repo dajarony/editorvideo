@@ -4,6 +4,21 @@ Historial de cambios, bugs corregidos y decisiones técnicas.
 
 ---
 
+## Sin publicar — revisión del editor
+
+- **Un solo motor para la ventana, la CLI y los contratos** (`modulos/servicio_edicion.py`). La ventana tenía su propia cadena de pasos, en otro orden que `mejorar_video.py` (fades antes de la mejora visual), y su propia copia de Real-ESRGAN. Ahora las casillas y los flags se convierten en un contrato de herramientas en un orden fijo y lo ejecuta el mismo ejecutor: silencios, muletillas, color, mejora real, vertical, voz, subtítulos, fades de audio y super resolución. `aplicar_todas_mejoras` también pasa por ahí. Una imagen solo recibe la mejora real y la super resolución.
+- **Real-ESRGAN en un solo sitio** (`modulos/superresolucion.py`): la versión robusta de la ventana (lotes de 50 fotogramas, reintento si un lote sale negro, audio original) la usan ahora la ventana, `superresolucion_video.py` (que conserva `--escala 2` y `realesrnet-x4plus`) y la nueva herramienta de contrato `superresolucion_ia`. El ejecutable se busca en `realesrgan/` o en `AEGS_REALESRGAN`, y si falta el error dice dónde ponerlo.
+- **Nueva herramienta `eliminar_muletillas`** en los contratos (antes solo existía en la ventana); corta imagen y audio a la vez y, como los cortes, informa de los tramos que conserva.
+- **Vertical 9:16 con encuadre:** `vertical_9_16` acepta `encuadre`: `centro` (como antes), `izquierda`, `derecha` (para no cortar a una persona situada a un lado) o `completo` (no recorta: el vídeo entero sobre una copia desenfocada). La ventana tiene un selector, `mejorar_video.py` el flag `--encuadre` y los comandos entienden «vertical … a la izquierda», «… a la derecha» y «… sin recortar».
+
+- **Los tiempos de un contrato son los del vídeo original** (`"tiempos": "original"`, por defecto). Antes cada paso usaba los segundos del vídeo que le llegaba, así que «corta de 7 a 9 y pon un texto en el 12» ponía el texto 2 s más tarde de lo pedido. Ahora `corte` y `cortar_silencios` informan de los tramos que conservan (`SalidaPaso`) y el ejecutor traslada los segundos de los pasos siguientes (`modulos/tiempos.py`). Un momento que cae en un tramo ya quitado pasa al siguiente que queda, con un aviso; un corte de algo ya quitado se omite (`pasos_omitidos`). Con `"tiempos": "resultado"` se conserva el comportamiento anterior.
+
+## Sin publicar — imagen y voz sincronizadas
+
+- **Corregido: quitar silencios desincronizaba la voz.** `cortar_silencios` aplicaba `silenceremove` solo al audio y dejaba el vídeo entero: en una prueba de 6 s con 2 s de silencio, el vídeo seguía durando 6,0 s y el audio 4,04 s. Ahora detecta los silencios con `silencedetect` y corta los mismos tramos en la imagen y en el sonido (como ya hacía `eliminar_muletillas`), dejando 0,15 s de cada silencio a cada lado. Un vídeo sin audio o sin silencios largos se copia tal cual.
+- **Corregido: el fundido cruzado acortaba el vídeo.** Cada `crossfade` solapaba 0,7 s las dos escenas, así que el vídeo quedaba 0,7 s más corto por fundido mientras el audio conservaba su duración; `-shortest` cortaba entonces el final de la última frase y la voz se iba retrasando respecto a la imagen (3 escenas: vídeo de 4,73 s para un timeline de 6,13 s). Ahora la escena que sale se alarga lo que dura el fundido y cada fundido empieza donde empieza la escena siguiente: el vídeo y el audio duran exactamente lo que el timeline. No se había visto porque el FFmpeg de los tests no tenía `xfade` (llegó en FFmpeg 4.3).
+- **Tests:** `tests/test_sincronizacion.py` (9) comprueba las dos cosas con medios reales; los que necesitan `xfade` se omiten con su motivo si el FFmpeg no lo tiene.
+
 ## Sin publicar — integración con Aura Motion Studio (F3a: narración primero)
 
 - **`--solo-narracion`:** valida y genera la narración (`output/narracion_duraciones.json`) y se detiene sin montar. Los clips **aún pueden no existir** (un clip ausente o ilegible es un aviso, no un error); el resto de la validación sigue siendo estricta. No se combina con `--skip-tts`.

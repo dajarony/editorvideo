@@ -1,0 +1,147 @@
+# -*- coding: utf-8 -*-
+"""
+═══════════════════════════════════════════════════════════
+SUME DOCBLOCK v2.0
+═══════════════════════════════════════════════════════════
+Archivo: modulos/servicio_edicion.py
+Tipo: Lógica → Servicio único de edición
+Dependencias: contrato_edicion
+
+Entradas:
+- Las opciones de mejora de la interfaz o de la CLI (el diccionario de ConfigEdicion).
+
+Acciones:
+1. Convierte las opciones en un contrato de herramientas, siempre en el mismo orden.
+2. Lo ejecuta con el mismo ejecutor que los contratos escritos a mano.
+
+Salidas:
+- El resultado del ejecutor de contratos.
+
+Antes la ventana tenía su propia cadena de pasos (en otro orden que la CLI) y su propia
+copia de Real-ESRGAN; ahora todas las formas de editar pasan por aquí, así que una
+corrección en una herramienta vale para la ventana, la CLI y los contratos.
+═══════════════════════════════════════════════════════════
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable
+
+from .contrato_edicion import ejecutar_contrato_herramientas
+
+# Valores por defecto de cada opción: nada se aplica si no se pide, salvo los fades de 30 ms.
+POR_DEFECTO: dict[str, Any] = {
+    "tipo": "video",
+    "cortar_silencios": False,
+    "umbral_silencio_db": -35.0,
+    "duracion_silencio_s": 0.6,
+    "eliminar_muletillas": False,
+    "color_grading": False,
+    "estilo_color": "natural_claro",
+    "mejora_real": False,
+    "nivel_mejora": "media",
+    "formato_vertical": False,
+    "encuadre_vertical": "centro",
+    "limpiar_voz": False,
+    "nivel_voz": "media",
+    "subtitulos": False,
+    "audio_fades": True,
+    "duracion_fade": 0.03,
+    "esrgan": False,
+    "modelo_esrgan": "realesrgan-x4plus",
+    "idioma": "es",
+}
+
+
+def contrato_desde_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Contrato de herramientas equivalente a las opciones marcadas, en orden fijo.
+
+    Orden: primero lo que quita tiempo (silencios, muletillas), luego imagen y formato,
+    después el audio (voz, subtítulos sobre el formato final, fades al final del audio)
+    y por último la super resolución, la más lenta, sobre el resultado ya recortado.
+    Una imagen solo recibe la mejora real y la super resolución.
+    """
+    cfg = {**POR_DEFECTO, **{k: v for k, v in (config or {}).items() if v is not None}}
+    video = cfg["tipo"] != "imagen"
+    pasos: list[dict[str, Any]] = []
+
+    def paso(nombre: str, **parametros: Any) -> None:
+        pasos.append({"herramienta": nombre, "parametros": parametros})
+
+    if video and cfg["cortar_silencios"]:
+        paso("cortar_silencios", umbral_db=float(cfg["umbral_silencio_db"]),
+             duracion_min=float(cfg["duracion_silencio_s"]))
+    if video and cfg["eliminar_muletillas"]:
+        paso("eliminar_muletillas", idioma=cfg["idioma"])
+    if video and cfg["color_grading"]:
+        paso("color_grading", estilo=cfg["estilo_color"])
+    if cfg["mejora_real"]:
+        paso("mejora_real", nivel=cfg["nivel_mejora"])
+    if video and cfg["formato_vertical"]:
+        paso("vertical_9_16", encuadre=cfg["encuadre_vertical"])
+    if video and cfg["limpiar_voz"]:
+        paso("limpiar_voz", nivel=cfg["nivel_voz"])
+    if video and cfg["subtitulos"]:
+        paso("subtitulos", idioma=cfg["idioma"])
+    if video and cfg["audio_fades"]:
+        paso("fades_audio", duracion_ms=max(5, int(round(float(cfg["duracion_fade"]) * 1000))))
+    if cfg["esrgan"]:
+        paso("superresolucion_ia", modelo=cfg["modelo_esrgan"])
+    return {"herramientas": pasos}
+
+
+def procesar(
+    ruta_entrada: str,
+    ruta_salida: str,
+    config: dict[str, Any],
+    al_progresar: Callable[[float, str], None] | None = None,
+    control=None,
+) -> dict[str, Any]:
+    """Aplica las opciones marcadas a un vídeo o una imagen con el ejecutor de contratos."""
+    return ejecutar_contrato_herramientas(
+        ruta_entrada, ruta_salida, contrato_desde_config(config), al_progresar=al_progresar,
+        control=control,
+    )
+
+
+def previsualizar(ruta_entrada: str, ruta_salida: str, config: dict[str, Any],
+                  desde: float = 0.0, duracion: float = 8.0, control=None) -> dict[str, Any]:
+    """Comparación lado a lado de un extracto con los tiempos del original."""
+    import os
+    import tempfile
+    from .proceso import contexto, ejecutar_proceso, Cancelado
+    from .tiempos import MapaTiempos
+    from .utilidades import binario
+
+    if config.get("tipo", "video") != "video":
+        return {"exito": False, "errores": ["La previsualización requiere un vídeo."]}
+    if desde < 0 or duracion <= 0 or duracion > 30:
+        return {"exito": False, "errores": ["Elige un inicio positivo y hasta 30 segundos."]}
+    try:
+        with contexto(control), tempfile.TemporaryDirectory(prefix="aegs_preview_") as tmp:
+            original = os.path.join(tmp, "original.mp4")
+            editado = os.path.join(tmp, "editado.mp4")
+            cmd = [binario("ffmpeg"), "-y", "-ss", str(desde), "-i", ruta_entrada,
+                   "-t", str(duracion), "-vf", "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                   "-c:a", "aac", original]
+            corte = ejecutar_proceso(cmd, capture_output=True, text=True)
+            if corte.returncode or not os.path.isfile(original):
+                raise RuntimeError((corte.stderr or "No se pudo extraer el fragmento.")[-500:])
+            resultado = ejecutar_contrato_herramientas(
+                original, editado, contrato_desde_config(config),
+                control=control, mapa_inicial=MapaTiempos.extracto(desde, desde + duracion))
+            if not resultado["exito"]:
+                return resultado
+            cmd = [binario("ffmpeg"), "-y", "-i", original, "-i", editado,
+                   "-filter_complex", "[0:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2[a];[1:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2[b];[a][b]hstack=inputs=2[v]",
+                   "-map", "[v]", "-map", "1:a?", "-c:v", "libx264", "-preset", "ultrafast",
+                   "-crf", "30", "-c:a", "aac", "-shortest", ruta_salida]
+            mezcla = ejecutar_proceso(cmd, capture_output=True, text=True)
+            if mezcla.returncode:
+                raise RuntimeError((mezcla.stderr or "No se pudo crear la comparación.")[-500:])
+            return {"exito": True, "archivo": ruta_salida, "avisos": resultado.get("avisos", [])}
+    except (RuntimeError, OSError, Cancelado) as exc:
+        if os.path.exists(ruta_salida):
+            os.remove(ruta_salida)
+        return {"exito": False, "cancelado": isinstance(exc, Cancelado), "errores": [str(exc)]}

@@ -26,6 +26,8 @@ Salidas:
 import os
 import json
 import subprocess
+import re
+from .proceso import ejecutar_proceso
 from configuracion import (
     CARPETA_OUTPUT, ARCHIVO_TIMELINE, ARCHIVO_DURACIONES,
     ARCHIVO_VIDEO_FINAL, ARCHIVO_SRT, ARCHIVO_VIDEO_SUB,
@@ -48,6 +50,12 @@ def segundos_a_srt(segundos: float) -> str:
     minutos, resto = divmod(resto, 60_000)
     segs, milisegs = divmod(resto, 1000)
     return f"{horas:02d}:{minutos:02d}:{segs:02d},{milisegs:03d}"
+
+
+def _trozos_guion(texto: str, max_palabras: int = 9) -> list[str]:
+    palabras = texto.split()
+    return [" ".join(palabras[i:i + max_palabras])
+            for i in range(0, len(palabras), max_palabras)]
 
 
 def generar_srt_matematico(ruta_proyecto: str, datos_proyecto: dict) -> str:
@@ -82,14 +90,13 @@ def generar_srt_matematico(ruta_proyecto: str, datos_proyecto: dict) -> str:
     # Diccionario de escenas para acceso rápido a las pausas
     escenas_config = {e["id"]: e for e in datos_proyecto.get("escenas", [])}
 
-    logger.info(f"Cargando modelo Whisper '{MODELO_WHISPER}' (puede tardar la primera vez)...")
-    try:
-        import whisper
-    except ImportError:
-        raise ImportError(
-            'Whisper no está instalado (es opcional). Para subtítulos: pip install "automontaje[subtitulos]"'
-        ) from None
-    modelo = whisper.load_model(MODELO_WHISPER)
+    modo = datos_proyecto.get("subtitulos", {}).get("modo", "guion")
+    if modo not in ("guion", "transcripcion"):
+        raise ValueError("subtitulos.modo debe ser 'guion' o 'transcripcion'.")
+    if modo == "transcripcion":
+        from .transcripcion import motor_disponible, INSTALAR
+        if motor_disponible() is None:
+            raise ImportError(INSTALAR + '\n  pip install "automontaje[subtitulos]"')
 
     lineas_srt = []
     indice_sub = 1
@@ -108,16 +115,26 @@ def generar_srt_matematico(ruta_proyecto: str, datos_proyecto: dict) -> str:
         # Offset global = momento exacto donde la voz empieza en el vídeo final
         offset_global = escena["inicio_seg"] + pausa_antes
 
-        logger.info(f"  [{idx}/{total}] Transcribiendo '{id_escena}' con Whisper...")
-        resultado = modelo.transcribe(
-            archivo_mp3,
-            language=datos_proyecto.get("idioma", "es")
-        )
+        if modo == "guion":
+            partes = _trozos_guion(escenas_config[id_escena]["texto_narracion"])
+            duracion_voz = float(duraciones[id_escena]["duracion_real_seg"])
+            pesos = [max(1, len(p.split())) for p in partes]
+            suma = sum(pesos)
+            cursor = 0
+            segmentos = []
+            for parte, peso in zip(partes, pesos):
+                inicio, cursor = cursor, cursor + peso
+                segmentos.append((duracion_voz * inicio / suma,
+                                  duracion_voz * cursor / suma, parte))
+        else:
+            from .transcripcion import transcribir
+            segmentos = [(s.inicio, s.fin, s.texto) for s in transcribir(
+                archivo_mp3, datos_proyecto.get("idioma", "es"), MODELO_WHISPER)]
 
-        for segmento in resultado["segments"]:
-            inicio_real = offset_global + segmento["start"]
-            fin_real = offset_global + segmento["end"]
-            texto = segmento["text"].strip()
+        for inicio, fin, texto in segmentos:
+            inicio_real = offset_global + inicio
+            fin_real = offset_global + fin
+            texto = texto.strip()
 
             if not texto:
                 continue
@@ -197,7 +214,7 @@ def incrustar_subtitulos(
     ]
 
     logger.info("Incrustando subtítulos en el vídeo (renderizado final)...")
-    resultado = subprocess.run(
+    resultado = ejecutar_proceso(
         comando, cwd=ruta_trabajo, capture_output=True, text=True
     )
 
@@ -228,7 +245,7 @@ def procesar_subtitulos(ruta_proyecto: str, datos_proyecto: dict) -> dict:
             logger.info("Subtítulos desactivados en el JSON. Omitiendo Módulo 4.")
             return {"exito": True, "omitido": True}
 
-        logger.info("Fase 4.1: Transcripción aislada con Whisper (sin música)...")
+        logger.info("Fase 4.1: Generando SRT desde el guion o la transcripción...")
         ruta_srt = generar_srt_matematico(ruta_proyecto, datos_proyecto)
 
         # Modo sidecar: solo SRT, sin quemarlos en el vídeo.
