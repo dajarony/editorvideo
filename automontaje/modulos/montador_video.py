@@ -179,7 +179,8 @@ def _construir_filtro_video(escena: dict, resolucion: str, fps: int) -> str:
     fps = normalizar_fps(fps)
     dur = escena["duracion_necesaria"]
     # Duración estricta: como mucho se repite 1 fotograma (la tolerancia), nunca una congelación.
-    relleno = 1.0 / fps if "fotogramas" in escena else max(0, dur)
+    # Sin modo estricto se congela lo que falte, incluida la cola de un fundido cruzado (_duracion_procesada).
+    relleno = 1.0 / fps if "fotogramas" in escena else max(0, dur) + FADE_TRANSICION_SEG
     fade_seg = FADE_TRANSICION_SEG
     trans_in = escena.get("transicion_entrada", "cut")
     trans_out = escena.get("transicion_salida", "cut")
@@ -236,7 +237,7 @@ def procesar_clips_individuales(
         if "fotogramas" in escena:
             limite = ["-frames:v", str(escena["fotogramas"])]
         else:
-            limite = ["-t", str(dur_necesaria)]
+            limite = ["-t", str(_duracion_procesada(timeline["escenas"], idx, FADE_TRANSICION_SEG))]
         comando = [
             binario("ffmpeg"), "-y", "-v", "error",
             "-ss", str(inicio_trim),
@@ -271,15 +272,55 @@ def procesar_clips_individuales(
     return archivos_procesados
 
 
+def _cruces(escenas: list) -> list:
+    """Para cada frontera i → i+1: ¿se cruzan las dos escenas con xfade?"""
+    return [
+        escenas[i]["transicion_salida"] in TRANSICIONES_INTER
+        or escenas[i + 1]["transicion_entrada"] in TRANSICIONES_INTER
+        for i in range(len(escenas) - 1)
+    ]
+
+
+def _duracion_procesada(escenas: list, idx: int, fade: float) -> float:
+    """Duración del clip procesado de la escena `idx`.
+
+    Si sale con fundido cruzado, se alarga `fade` segundos: esa cola es la que se funde con el
+    principio de la escena siguiente, que así empieza en su segundo exacto del timeline y el
+    vídeo dura lo mismo que el audio (la suma de las escenas).
+    """
+    cruces = _cruces(escenas)
+    extra = fade if idx < len(cruces) and cruces[idx] else 0.0
+    return escenas[idx]["duracion_necesaria"] + extra
+
+
+def _grafo_transiciones(escenas: list, fade: float) -> str:
+    """filter_complex que encadena los clips: xfade donde hay fundido cruzado, concat donde no.
+
+    Cada xfade empieza justo donde empieza la escena siguiente en el timeline (no `fade` antes):
+    la escena que sale aporta su cola alargada (_duracion_procesada), así que nada se acorta.
+    """
+    if len(escenas) == 1:
+        return "[0:v]copy[vout]"
+    partes = []
+    anterior = "[0:v]"
+    inicio_siguiente = 0.0
+    for i, cruza in enumerate(_cruces(escenas)):
+        inicio_siguiente += escenas[i]["duracion_necesaria"]
+        salida = f"[v{i}]" if i < len(escenas) - 2 else "[vout]"
+        if cruza:
+            partes.append(
+                f"{anterior}[{i + 1}:v]xfade=transition=fade:"
+                f"duration={fade}:offset={inicio_siguiente:.3f}{salida}"
+            )
+        else:
+            partes.append(f"{anterior}[{i + 1}:v]concat=n=2:v=1:a=0{salida}")
+        anterior = salida
+    return ";".join(partes)
+
+
 def _hay_crossfade_real(timeline: dict) -> bool:
     """¿Hay alguna transición que requiera xfade entre clips adyacentes?"""
-    escenas = timeline["escenas"]
-    for i in range(len(escenas) - 1):
-        sale = escenas[i]["transicion_salida"]
-        entra = escenas[i + 1]["transicion_entrada"]
-        if sale in TRANSICIONES_INTER or entra in TRANSICIONES_INTER:
-            return True
-    return False
+    return any(_cruces(timeline["escenas"]))
 
 
 def _ensamblar_concat_demuxer(
@@ -337,48 +378,7 @@ def _ensamblar_xfade(
     inputs.extend(["-i", ruta_audio])
     indice_audio = len(archivos_procesados)
 
-    escenas = timeline["escenas"]
-    duraciones = [e["duracion_necesaria"] for e in escenas]
-    fade = FADE_TRANSICION_SEG
-
-    # Construir el grafo xfade encadenado
-    # offset_n = sum(d_0..d_n) - n*fade
-    partes_filter = []
-    cursor_offset = 0.0
-    etiqueta_anterior = "[0:v]"
-
-    for i in range(len(escenas) - 1):
-        sale = escenas[i]["transicion_salida"]
-        entra = escenas[i + 1]["transicion_entrada"]
-        usar_xfade = sale in TRANSICIONES_INTER or entra in TRANSICIONES_INTER
-
-        # offset = duración acumulada - fade (donde empieza el cruce)
-        # Solo se resta fade si hay xfade, porque la transición consume tiempo
-        cursor_offset += duraciones[i]
-        if usar_xfade:
-            offset = cursor_offset - fade
-            cursor_offset -= fade  # el siguiente clip empieza fade segundos antes
-
-        siguiente = f"[{i + 1}:v]"
-        salida = f"[v{i}]" if i < len(escenas) - 2 else "[vout]"
-
-        if usar_xfade:
-            partes_filter.append(
-                f"{etiqueta_anterior}{siguiente}xfade=transition=fade:"
-                f"duration={fade}:offset={offset:.3f}{salida}"
-            )
-        else:
-            # Concat dentro del filter_complex
-            partes_filter.append(
-                f"{etiqueta_anterior}{siguiente}concat=n=2:v=1:a=0{salida}"
-            )
-
-        etiqueta_anterior = salida
-
-    if len(escenas) == 1:
-        partes_filter.append("[0:v]copy[vout]")
-
-    filter_complex = ";".join(partes_filter)
+    filter_complex = _grafo_transiciones(timeline["escenas"], FADE_TRANSICION_SEG)
 
     comando = [
         binario("ffmpeg"), "-y", "-v", "error",
@@ -393,7 +393,7 @@ def _ensamblar_xfade(
         ruta_video_final
     ]
 
-    logger.info(f"Concatenando con xfade real ({len(escenas)} clips)...")
+    logger.info(f"Concatenando con xfade real ({len(timeline['escenas'])} clips)...")
     resultado = subprocess.run(comando, capture_output=True, text=True)
     if resultado.returncode != 0:
         logger.error(f"FFmpeg xfade: {resultado.stderr}")

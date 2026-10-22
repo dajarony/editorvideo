@@ -11,7 +11,7 @@ Entradas:
 - Ruta a cualquier archivo de vídeo .mp4
 
 Acciones:
-1. Elimina silencios largos (FFmpeg silenceremove)
+1. Elimina silencios largos (FFmpeg silencedetect; mismos cortes en imagen y audio)
 2. Elimina muletillas: umm, eh, este... (Whisper word timestamps)
 3. Color grading cinematográfico (FFmpeg curves + eq)
 4. Fades de audio en inicio/fin (30ms, FFmpeg afade)
@@ -155,28 +155,81 @@ def _proteger_brillo_original(ruta_referencia: str, ruta_salida: str) -> None:
                 pass
 
 
+def _silencios_detectados(registro: str, duracion_total: float) -> list:
+    """Tramos (inicio, fin) que silencedetect anotó en su registro.
+
+    Un silencio que llega hasta el final no tiene `silence_end`: termina en `duracion_total`.
+    """
+    silencios, inicio = [], None
+    for linea in registro.splitlines():
+        if "silence_start:" in linea:
+            inicio = float(linea.split("silence_start:")[1].split()[0])
+        elif "silence_end:" in linea and inicio is not None:
+            silencios.append((inicio, float(linea.split("silence_end:")[1].split()[0])))
+            inicio = None
+    if inicio is not None:
+        silencios.append((inicio, duracion_total))
+    return silencios
+
+
+def _tramos_sin_silencio(silencios: list, duracion_total: float, margen: float = 0.15) -> list:
+    """Tramos a conservar: todo menos cada silencio, dejando `margen` s de él a cada lado
+    para que la voz no empiece ni termine de golpe."""
+    mantener, cursor = [], 0.0
+    for inicio, fin in sorted(silencios):
+        corte_inicio, corte_fin = max(inicio + margen, cursor), fin - margen
+        if corte_fin <= corte_inicio:
+            continue
+        if corte_inicio > cursor:
+            mantener.append((round(cursor, 4), round(corte_inicio, 4)))
+        cursor = corte_fin
+    if cursor < duracion_total:
+        mantener.append((round(cursor, 4), round(duracion_total, 4)))
+    return mantener
+
+
+def _recortar_tramos(ruta_entrada: str, ruta_salida: str, mantener: list, descripcion: str) -> None:
+    """Conserva solo `mantener` en la imagen Y en el sonido, con los mismos cortes, para que no se desincronicen."""
+    expr = "+".join(f"between(t,{i:.3f},{f:.3f})" for i, f in mantener)
+    _run_ffmpeg([
+        binario("ffmpeg"), "-y", "-i", ruta_entrada,
+        "-vf", f"select='{expr}',setpts=N/FRAME_RATE/TB",
+        "-af", f"aselect='{expr}',asetpts=N/SR/TB",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
+        "-movflags", "+faststart",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+        ruta_salida
+    ], descripcion)
+
+
 def cortar_silencios(
     ruta_entrada: str,
     ruta_salida: str,
     umbral_db: float = -35.0,
     duracion_min: float = 0.6
 ) -> str:
-    """Elimina silencios largos del vídeo con FFmpeg silenceremove."""
+    """Elimina los silencios largos del vídeo, cortando los mismos tramos en la imagen y en el audio."""
     logger.info(f"  ✂  Eliminando silencios (umbral={umbral_db}dB, min={duracion_min}s)...")
-    filtro = (
-        f"silenceremove=stop_periods=-1:"
-        f"stop_duration={duracion_min}:"
-        f"stop_threshold={umbral_db}dB"
-    )
-    _run_ffmpeg([
-        binario("ffmpeg"), "-y", "-i", ruta_entrada,
-        "-af", filtro,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
-        "-movflags", "+faststart",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-        ruta_salida
-    ], "cortar_silencios")
+    if not _tiene_audio(ruta_entrada):
+        logger.info("  ✅ El vídeo no tiene audio: no hay silencios que quitar.")
+        shutil.copy2(ruta_entrada, ruta_salida)
+        return ruta_salida
+
+    registro = subprocess.run(
+        [binario("ffmpeg"), "-hide_banner", "-nostats", "-i", ruta_entrada,
+         "-af", f"silencedetect=noise={umbral_db}dB:d={duracion_min}", "-f", "null", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="ignore"
+    ).stderr
+    duracion_total = _duracion_video(ruta_entrada)
+    mantener = _tramos_sin_silencio(_silencios_detectados(registro, duracion_total), duracion_total)
+
+    if not mantener or mantener == [(0.0, round(duracion_total, 4))]:
+        logger.info("  ✅ No hay silencios largos que quitar.")
+        shutil.copy2(ruta_entrada, ruta_salida)
+        return ruta_salida
+
+    _recortar_tramos(ruta_entrada, ruta_salida, mantener, "cortar_silencios")
     logger.info(f"  ✅ Silencios eliminados → {os.path.basename(ruta_salida)}")
     return ruta_salida
 
@@ -230,17 +283,7 @@ def eliminar_muletillas(
         shutil.copy2(ruta_entrada, ruta_salida)
         return ruta_salida
 
-    expr = "+".join(f"between(t,{i:.3f},{f:.3f})" for i, f in mantener)
-    _run_ffmpeg([
-        binario("ffmpeg"), "-y", "-i", ruta_entrada,
-        "-vf", f"select='{expr}',setpts=N/FRAME_RATE/TB",
-        "-af", f"aselect='{expr}',asetpts=N/SR/TB",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",
-        "-movflags", "+faststart",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-        ruta_salida
-    ], "eliminar_muletillas")
+    _recortar_tramos(ruta_entrada, ruta_salida, mantener, "eliminar_muletillas")
     logger.info(f"  ✅ Muletillas eliminadas → {os.path.basename(ruta_salida)}")
     return ruta_salida
 

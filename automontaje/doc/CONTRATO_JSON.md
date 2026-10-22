@@ -128,7 +128,7 @@ Con `montaje.duracion_estricta` (o `--duracion-estricta`) no hace ninguna de las
 | `cut` | Corte directo (sin efecto) |
 | `fade_from_black` | Aparece gradualmente desde negro |
 | `fade_to_black` | Desaparece gradualmente a negro |
-| `crossfade` | Dip-to-black: fade out rápido + fade in rápido |
+| `crossfade` | Fundido cruzado real (xfade, 0,7 s) con la escena vecina. La escena que sale se alarga 0,7 s para fundirse con el principio de la siguiente, así que cada escena empieza en su segundo exacto y el vídeo dura lo mismo que el audio. Necesita FFmpeg 4.3 o posterior. |
 
 ---
 

@@ -37,7 +37,7 @@ FADE_DUCK_MS = 200
 
 # ─── Constantes de Transiciones ─────────────────────────
 # Duración del fade visual (en segundos) para transiciones
-# de tipo fade_from_black, fade_to_black y dip-to-black (crossfade).
+# fade_from_black, fade_to_black y dip_to_black, y del fundido cruzado real (crossfade, xfade).
 FADE_TRANSICION_SEG = 0.7
 
 # ─── Voces Edge TTS Validadas ───────────────────────────

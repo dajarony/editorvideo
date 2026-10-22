@@ -4,6 +4,12 @@ Historial de cambios, bugs corregidos y decisiones técnicas.
 
 ---
 
+## Sin publicar — imagen y voz sincronizadas
+
+- **Corregido: quitar silencios desincronizaba la voz.** `cortar_silencios` aplicaba `silenceremove` solo al audio y dejaba el vídeo entero: en una prueba de 6 s con 2 s de silencio, el vídeo seguía durando 6,0 s y el audio 4,04 s. Ahora detecta los silencios con `silencedetect` y corta los mismos tramos en la imagen y en el sonido (como ya hacía `eliminar_muletillas`), dejando 0,15 s de cada silencio a cada lado. Un vídeo sin audio o sin silencios largos se copia tal cual.
+- **Corregido: el fundido cruzado acortaba el vídeo.** Cada `crossfade` solapaba 0,7 s las dos escenas, así que el vídeo quedaba 0,7 s más corto por fundido mientras el audio conservaba su duración; `-shortest` cortaba entonces el final de la última frase y la voz se iba retrasando respecto a la imagen (3 escenas: vídeo de 4,73 s para un timeline de 6,13 s). Ahora la escena que sale se alarga lo que dura el fundido y cada fundido empieza donde empieza la escena siguiente: el vídeo y el audio duran exactamente lo que el timeline. No se había visto porque el FFmpeg de los tests no tenía `xfade` (llegó en FFmpeg 4.3).
+- **Tests:** `tests/test_sincronizacion.py` (9) comprueba las dos cosas con medios reales; los que necesitan `xfade` se omiten con su motivo si el FFmpeg no lo tiene.
+
 ## Sin publicar — integración con Aura Motion Studio (F3a: narración primero)
 
 - **`--solo-narracion`:** valida y genera la narración (`output/narracion_duraciones.json`) y se detiene sin montar. Los clips **aún pueden no existir** (un clip ausente o ilegible es un aviso, no un error); el resto de la validación sigue siendo estricta. No se combina con `--skip-tts`.
