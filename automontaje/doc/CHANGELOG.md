@@ -4,6 +4,10 @@ Historial de cambios, bugs corregidos y decisiones técnicas.
 
 ---
 
+## Sin publicar — revisión del editor
+
+- **Los tiempos de un contrato son los del vídeo original** (`"tiempos": "original"`, por defecto). Antes cada paso usaba los segundos del vídeo que le llegaba, así que «corta de 7 a 9 y pon un texto en el 12» ponía el texto 2 s más tarde de lo pedido. Ahora `corte` y `cortar_silencios` informan de los tramos que conservan (`SalidaPaso`) y el ejecutor traslada los segundos de los pasos siguientes (`modulos/tiempos.py`). Un momento que cae en un tramo ya quitado pasa al siguiente que queda, con un aviso; un corte de algo ya quitado se omite (`pasos_omitidos`). Con `"tiempos": "resultado"` se conserva el comportamiento anterior.
+
 ## Sin publicar — imagen y voz sincronizadas
 
 - **Corregido: quitar silencios desincronizaba la voz.** `cortar_silencios` aplicaba `silenceremove` solo al audio y dejaba el vídeo entero: en una prueba de 6 s con 2 s de silencio, el vídeo seguía durando 6,0 s y el audio 4,04 s. Ahora detecta los silencios con `silencedetect` y corta los mismos tramos en la imagen y en el sonido (como ya hacía `eliminar_muletillas`), dejando 0,15 s de cada silencio a cada lado. Un vídeo sin audio o sin silencios largos se copia tal cual.

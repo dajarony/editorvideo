@@ -4,32 +4,57 @@
 La IA no ejecuta FFmpeg ni comandos crudos. Solo puede pedir herramientas
 registradas con parametros validados. El validador maestro normaliza el
 contrato antes de que el ejecutor toque el video.
+
+Tiempos: por defecto ("tiempos": "original") todos los segundos de un contrato se
+refieren al video ORIGINAL. Si un paso quita tiempo (un corte, quitar silencios), los
+pasos siguientes se trasladan al resultado con modulos/tiempos.py. Con
+"tiempos": "resultado" cada paso usa los segundos del video que le llega.
 """
 
 from __future__ import annotations
 
 import copy
+import math
 import os
 import shutil
 import tempfile
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .tiempos import MapaTiempos
+
 
 ParametroSpec = dict[str, Any]
 ValidadorExtra = Callable[[dict[str, Any]], list[str]]
-EjecutorHerramienta = Callable[[str, str, dict[str, Any]], str]
+TIEMPOS_VALIDOS = ("original", "resultado")
+
+
+@dataclass(frozen=True)
+class SalidaPaso:
+    """Resultado de una herramienta que quita tiempo: su salida y los tramos que conserva
+    (en segundos de SU entrada), para trasladar los tiempos de los pasos siguientes."""
+
+    ruta: str
+    conservados: list | None = None
+
+
+EjecutorHerramienta = Callable[[str, str, dict[str, Any]], "str | SalidaPaso"]
 
 
 @dataclass(frozen=True)
 class HerramientaEdicion:
-    """Definicion publica y ejecutable de una herramienta."""
+    """Definicion publica y ejecutable de una herramienta.
+
+    `tiempos` nombra los parametros que son segundos del video: ("inicio", "fin") es un
+    tramo y ("inicio",) un momento. El ejecutor los traslada del original al resultado.
+    """
 
     nombre: str
     descripcion: str
     parametros: dict[str, ParametroSpec]
     ejecutar: EjecutorHerramienta
     validar_extra: ValidadorExtra | None = None
+    tiempos: tuple = ()
 
 
 def _validar_tipo(nombre: str, valor: Any, tipo: str) -> str | None:
@@ -105,15 +130,16 @@ def _normalizar_parametros(
     return normalizados, errores
 
 
-def _ejecutar_cortar_silencios(entrada: str, salida: str, params: dict[str, Any]) -> str:
-    from .mejoras import cortar_silencios
+def _ejecutar_cortar_silencios(entrada: str, salida: str, params: dict[str, Any]) -> SalidaPaso:
+    from .mejoras import recortar_silencios
 
-    return cortar_silencios(
+    ruta, conservados = recortar_silencios(
         entrada,
         salida,
         umbral_db=params["umbral_db"],
         duracion_min=params["duracion_min"],
     )
+    return SalidaPaso(ruta, conservados)
 
 
 def _ejecutar_color_grading(entrada: str, salida: str, params: dict[str, Any]) -> str:
@@ -162,10 +188,12 @@ def _ejecutar_fades_audio(entrada: str, salida: str, params: dict[str, Any]) -> 
 
 # ─── Efectos por momento concreto ───────────────────────
 
-def _ejecutar_corte(entrada: str, salida: str, params: dict[str, Any]) -> str:
-    from .efectos import cortar_fragmento
+def _ejecutar_corte(entrada: str, salida: str, params: dict[str, Any]) -> SalidaPaso:
+    from .efectos import _info_video, cortar_fragmento, tramos_conservados_tras_corte
 
-    return cortar_fragmento(entrada, salida, inicio=params["inicio"], fin=params["fin"])
+    duracion = _info_video(entrada)[0]
+    ruta = cortar_fragmento(entrada, salida, inicio=params["inicio"], fin=params["fin"])
+    return SalidaPaso(ruta, tramos_conservados_tras_corte(duracion, params["inicio"], params["fin"]))
 
 
 def _ejecutar_texto(entrada: str, salida: str, params: dict[str, Any]) -> str:
@@ -299,6 +327,7 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
         },
         ejecutar=_ejecutar_corte,
         validar_extra=_validar_corte,
+        tiempos=("inicio", "fin"),
     ),
     "texto": HerramientaEdicion(
         nombre="texto",
@@ -313,6 +342,7 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
             },
         },
         ejecutar=_ejecutar_texto,
+        tiempos=("inicio",),
     ),
     "imagen": HerramientaEdicion(
         nombre="imagen",
@@ -330,6 +360,7 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
         },
         ejecutar=_ejecutar_imagen,
         validar_extra=_validar_imagen,
+        tiempos=("inicio",),
     ),
     "zoom": HerramientaEdicion(
         nombre="zoom",
@@ -343,6 +374,7 @@ REGISTRO_HERRAMIENTAS: dict[str, HerramientaEdicion] = {
             },
         },
         ejecutar=_ejecutar_zoom,
+        tiempos=("inicio",),
     ),
 }
 
@@ -409,10 +441,15 @@ def validar_contrato_herramientas(contrato: dict[str, Any]) -> dict[str, Any]:
     if len(pasos) > 30:
         avisos.append("El contrato tiene mas de 30 pasos; revisa si es necesario.")
 
+    tiempos = contrato.get("tiempos", "original")
+    if tiempos not in TIEMPOS_VALIDOS:
+        errores.append(f"'tiempos' debe ser uno de: {', '.join(TIEMPOS_VALIDOS)}.")
+
     normalizado = None
     if not errores:
         normalizado = {
             "version": str(contrato.get("version", "1.0")),
+            "tiempos": tiempos,
             "herramientas": pasos,
         }
 
@@ -424,12 +461,54 @@ def validar_contrato_herramientas(contrato: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _segundos_legibles(t: float) -> str:
+    return f"{t:g}" if abs(t - round(t)) < 1e-9 else f"{t:.2f}"
+
+
+def _trasladar_tiempos(
+    herramienta: HerramientaEdicion, params: dict[str, Any], mapa: MapaTiempos, avisos: list[str]
+) -> dict[str, Any] | None:
+    """Parametros con los segundos del original trasladados al video que llega a este paso.
+
+    Devuelve None si el paso ya no tiene sentido (corta un tramo que otro paso quito entero).
+    """
+    if not herramienta.tiempos:
+        return params
+    nuevos = dict(params)
+    if herramienta.tiempos == ("inicio", "fin"):
+        tramo = mapa.llevar_tramo(params["inicio"], params["fin"])
+        if tramo is None:
+            avisos.append(
+                f"{herramienta.nombre}: el tramo {_segundos_legibles(params['inicio'])}–"
+                f"{_segundos_legibles(params['fin'])} s del original ya se habia quitado; se omite."
+            )
+            return None
+        nuevos["inicio"], nuevos["fin"] = round(tramo[0], 3), round(tramo[1], 3)
+        return nuevos
+    for clave in herramienta.tiempos:
+        t, quitado = mapa.llevar(params[clave])
+        if quitado:
+            avisos.append(
+                f"{herramienta.nombre}: el segundo {_segundos_legibles(params[clave])} del original "
+                f"se habia quitado; se usa el siguiente momento que queda."
+            )
+        nuevos[clave] = round(t, 3)
+    return nuevos
+
+
 def ejecutar_contrato_herramientas(
     ruta_entrada: str,
     ruta_salida: str,
     contrato: dict[str, Any],
+    al_progresar: Callable[[float, str], None] | None = None,
+    mapa_inicial: MapaTiempos | None = None,
 ) -> dict[str, Any]:
-    """Valida y ejecuta un contrato herramienta por herramienta."""
+    """Valida y ejecuta un contrato herramienta por herramienta.
+
+    `al_progresar(fraccion, texto)` informa del avance (0..1). `mapa_inicial` sirve para
+    ejecutar el contrato sobre un extracto del original (la previsualizacion): sus tiempos
+    siguen siendo los del original completo.
+    """
     if not os.path.exists(ruta_entrada):
         return {
             "exito": False,
@@ -447,56 +526,68 @@ def ejecutar_contrato_herramientas(
 
     contrato_ok = validacion["contrato"]
     pasos = contrato_ok["herramientas"]
+    avisos = list(validacion["avisos"])
     os.makedirs(os.path.dirname(os.path.abspath(ruta_salida)) or ".", exist_ok=True)
-
-    if not pasos:
-        shutil.copy2(ruta_entrada, ruta_salida)
-        return {
-            "exito": True,
-            "archivo": ruta_salida,
-            "contrato": contrato_ok,
-            "avisos": validacion["avisos"],
-        }
+    progresar = al_progresar or (lambda fraccion, texto: None)
 
     _, ext = os.path.splitext(ruta_salida)
     ext = ext or os.path.splitext(ruta_entrada)[1] or ".mp4"
 
+    # Sin una duracion conocida basta un mapa sin final: lo que cuenta son los tramos quitados.
+    mapa = None
+    if contrato_ok["tiempos"] == "original":
+        mapa = mapa_inicial or MapaTiempos.identidad(math.inf)
+
     actual = ruta_entrada
-    ejecutados = []
+    ejecutados: list[str] = []
+    omitidos: list[str] = []
     with tempfile.TemporaryDirectory(prefix="aegs_tools_") as tmpdir:
         for idx, paso in enumerate(pasos, 1):
             nombre = paso["herramienta"]
             herramienta = REGISTRO_HERRAMIENTAS[nombre]
-            salida_paso = (
-                ruta_salida if idx == len(pasos)
-                else os.path.join(tmpdir, f"paso_{idx:03d}_{nombre}{ext}")
-            )
+            params = paso["parametros"]
+            if mapa is not None:
+                params = _trasladar_tiempos(herramienta, params, mapa, avisos)
+                if params is None:
+                    omitidos.append(nombre)
+                    continue
+            progresar((idx - 1) / len(pasos), f"Paso {idx}/{len(pasos)}: {herramienta.descripcion}")
+            salida_paso = os.path.join(tmpdir, f"paso_{idx:03d}_{nombre}{ext}")
             try:
-                resultado = herramienta.ejecutar(actual, salida_paso, paso["parametros"])
+                resultado = herramienta.ejecutar(actual, salida_paso, params)
             except Exception as exc:
                 return {
                     "exito": False,
                     "errores": [f"{nombre} fallo: {exc}"],
-                    "avisos": validacion["avisos"],
+                    "avisos": avisos,
                     "pasos_ejecutados": ejecutados,
                 }
 
+            conservados = None
+            if isinstance(resultado, SalidaPaso):
+                resultado, conservados = resultado.ruta, resultado.conservados
             if not os.path.exists(resultado):
                 return {
                     "exito": False,
                     "errores": [f"{nombre} no genero salida: {resultado}"],
-                    "avisos": validacion["avisos"],
+                    "avisos": avisos,
                     "pasos_ejecutados": ejecutados,
                 }
 
+            if mapa is not None and conservados is not None:
+                mapa = mapa.tras_conservar(conservados)
             actual = resultado
             ejecutados.append(nombre)
 
+        shutil.copy2(actual, ruta_salida)
+
+    progresar(1.0, "Listo")
     return {
         "exito": True,
         "archivo": ruta_salida,
         "contrato": contrato_ok,
-        "avisos": validacion["avisos"],
+        "avisos": avisos,
         "pasos_ejecutados": ejecutados,
+        "pasos_omitidos": omitidos,
     }
 

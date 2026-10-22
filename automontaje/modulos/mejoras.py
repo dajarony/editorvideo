@@ -203,6 +203,42 @@ def _recortar_tramos(ruta_entrada: str, ruta_salida: str, mantener: list, descri
     ], descripcion)
 
 
+def recortar_silencios(
+    ruta_entrada: str,
+    ruta_salida: str,
+    umbral_db: float = -35.0,
+    duracion_min: float = 0.6
+) -> tuple:
+    """Elimina los silencios largos cortando los mismos tramos en la imagen y en el audio.
+
+    Devuelve (ruta_salida, tramos conservados en segundos de la entrada), para que quien
+    encadene más ediciones sepa dónde ha ido a parar cada momento (modulos/tiempos.py).
+    """
+    logger.info(f"  ✂  Eliminando silencios (umbral={umbral_db}dB, min={duracion_min}s)...")
+    duracion_total = _duracion_video(ruta_entrada)
+    todo = [(0.0, round(duracion_total, 4))]
+    if not _tiene_audio(ruta_entrada):
+        logger.info("  ✅ El vídeo no tiene audio: no hay silencios que quitar.")
+        shutil.copy2(ruta_entrada, ruta_salida)
+        return ruta_salida, todo
+
+    registro = subprocess.run(
+        [binario("ffmpeg"), "-hide_banner", "-nostats", "-i", ruta_entrada,
+         "-af", f"silencedetect=noise={umbral_db}dB:d={duracion_min}", "-f", "null", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="ignore"
+    ).stderr
+    mantener = _tramos_sin_silencio(_silencios_detectados(registro, duracion_total), duracion_total)
+
+    if not mantener or mantener == todo:
+        logger.info("  ✅ No hay silencios largos que quitar.")
+        shutil.copy2(ruta_entrada, ruta_salida)
+        return ruta_salida, todo
+
+    _recortar_tramos(ruta_entrada, ruta_salida, mantener, "cortar_silencios")
+    logger.info(f"  ✅ Silencios eliminados → {os.path.basename(ruta_salida)}")
+    return ruta_salida, mantener
+
+
 def cortar_silencios(
     ruta_entrada: str,
     ruta_salida: str,
@@ -210,28 +246,7 @@ def cortar_silencios(
     duracion_min: float = 0.6
 ) -> str:
     """Elimina los silencios largos del vídeo, cortando los mismos tramos en la imagen y en el audio."""
-    logger.info(f"  ✂  Eliminando silencios (umbral={umbral_db}dB, min={duracion_min}s)...")
-    if not _tiene_audio(ruta_entrada):
-        logger.info("  ✅ El vídeo no tiene audio: no hay silencios que quitar.")
-        shutil.copy2(ruta_entrada, ruta_salida)
-        return ruta_salida
-
-    registro = subprocess.run(
-        [binario("ffmpeg"), "-hide_banner", "-nostats", "-i", ruta_entrada,
-         "-af", f"silencedetect=noise={umbral_db}dB:d={duracion_min}", "-f", "null", "-"],
-        capture_output=True, text=True, encoding="utf-8", errors="ignore"
-    ).stderr
-    duracion_total = _duracion_video(ruta_entrada)
-    mantener = _tramos_sin_silencio(_silencios_detectados(registro, duracion_total), duracion_total)
-
-    if not mantener or mantener == [(0.0, round(duracion_total, 4))]:
-        logger.info("  ✅ No hay silencios largos que quitar.")
-        shutil.copy2(ruta_entrada, ruta_salida)
-        return ruta_salida
-
-    _recortar_tramos(ruta_entrada, ruta_salida, mantener, "cortar_silencios")
-    logger.info(f"  ✅ Silencios eliminados → {os.path.basename(ruta_salida)}")
-    return ruta_salida
+    return recortar_silencios(ruta_entrada, ruta_salida, umbral_db, duracion_min)[0]
 
 
 # ─── Paso 2: Eliminar muletillas ────────────────────────

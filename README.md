@@ -147,6 +147,13 @@ lo **ejecuta paso a paso de forma segura**:
 }
 ```
 
+**Los segundos son los del vídeo original.** En «corta de 7 a 9 y pon un texto en el
+segundo 12», el 12 es el del vídeo que tienes delante: como el corte quita 2 s, el
+texto aparece en el segundo 10 del resultado, sobre la misma imagen. Si un momento
+pedido cae en un tramo que otro paso ya quitó, se usa el siguiente que queda y se
+avisa; un corte de algo ya quitado se omite. Para que cada paso use los segundos del
+vídeo que le llega, añade `"tiempos": "resultado"` al contrato.
+
 ### Modo 4 — Mejorar un vídeo por CLI
 
 ```bash

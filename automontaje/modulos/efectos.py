@@ -87,6 +87,17 @@ def _fuente_sistema() -> str | None:
 
 # ─── 1. Cortar fragmento ────────────────────────────────
 
+def tramos_conservados_tras_corte(duracion: float, inicio: float, fin: float) -> list:
+    """Tramos que conserva cortar_fragmento (los trozos de menos de 0,05 s no se conservan)."""
+    inicio, fin = max(0.0, float(inicio)), min(duracion, float(fin))
+    tramos = []
+    if inicio > 0.05:
+        tramos.append((0.0, inicio))
+    if fin < duracion - 0.05:
+        tramos.append((fin, duracion))
+    return tramos
+
+
 def cortar_fragmento(
     ruta_entrada: str,
     ruta_salida: str,
