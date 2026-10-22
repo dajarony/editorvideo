@@ -95,8 +95,53 @@ def procesar(
     ruta_salida: str,
     config: dict[str, Any],
     al_progresar: Callable[[float, str], None] | None = None,
+    control=None,
 ) -> dict[str, Any]:
     """Aplica las opciones marcadas a un vídeo o una imagen con el ejecutor de contratos."""
     return ejecutar_contrato_herramientas(
-        ruta_entrada, ruta_salida, contrato_desde_config(config), al_progresar=al_progresar
+        ruta_entrada, ruta_salida, contrato_desde_config(config), al_progresar=al_progresar,
+        control=control,
     )
+
+
+def previsualizar(ruta_entrada: str, ruta_salida: str, config: dict[str, Any],
+                  desde: float = 0.0, duracion: float = 8.0, control=None) -> dict[str, Any]:
+    """Comparación lado a lado de un extracto con los tiempos del original."""
+    import os
+    import tempfile
+    from .proceso import contexto, ejecutar_proceso, Cancelado
+    from .tiempos import MapaTiempos
+    from .utilidades import binario
+
+    if config.get("tipo", "video") != "video":
+        return {"exito": False, "errores": ["La previsualización requiere un vídeo."]}
+    if desde < 0 or duracion <= 0 or duracion > 30:
+        return {"exito": False, "errores": ["Elige un inicio positivo y hasta 30 segundos."]}
+    try:
+        with contexto(control), tempfile.TemporaryDirectory(prefix="aegs_preview_") as tmp:
+            original = os.path.join(tmp, "original.mp4")
+            editado = os.path.join(tmp, "editado.mp4")
+            cmd = [binario("ffmpeg"), "-y", "-ss", str(desde), "-i", ruta_entrada,
+                   "-t", str(duracion), "-vf", "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                   "-c:a", "aac", original]
+            corte = ejecutar_proceso(cmd, capture_output=True, text=True)
+            if corte.returncode or not os.path.isfile(original):
+                raise RuntimeError((corte.stderr or "No se pudo extraer el fragmento.")[-500:])
+            resultado = ejecutar_contrato_herramientas(
+                original, editado, contrato_desde_config(config),
+                control=control, mapa_inicial=MapaTiempos.extracto(desde, desde + duracion))
+            if not resultado["exito"]:
+                return resultado
+            cmd = [binario("ffmpeg"), "-y", "-i", original, "-i", editado,
+                   "-filter_complex", "[0:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2[a];[1:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2[b];[a][b]hstack=inputs=2[v]",
+                   "-map", "[v]", "-map", "1:a?", "-c:v", "libx264", "-preset", "ultrafast",
+                   "-crf", "30", "-c:a", "aac", "-shortest", ruta_salida]
+            mezcla = ejecutar_proceso(cmd, capture_output=True, text=True)
+            if mezcla.returncode:
+                raise RuntimeError((mezcla.stderr or "No se pudo crear la comparación.")[-500:])
+            return {"exito": True, "archivo": ruta_salida, "avisos": resultado.get("avisos", [])}
+    except (RuntimeError, OSError, Cancelado) as exc:
+        if os.path.exists(ruta_salida):
+            os.remove(ruta_salida)
+        return {"exito": False, "cancelado": isinstance(exc, Cancelado), "errores": [str(exc)]}

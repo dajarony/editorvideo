@@ -1,5 +1,18 @@
 # 🎬 AEGS — Editor de Vídeo Automático con IA
 
+El editor permite previsualizar ocho segundos en una comparación lado a lado
+(original a la izquierda, edición a la derecha), consultar el avance de FFmpeg
+y cancelar un trabajo. El botón **Proponer con modelo local** usa Ollama instalado
+en este ordenador; escribe el contrato propuesto en la caja JSON para revisarlo
+antes de ejecutarlo. Configura `AEGS_MODELO` con el nombre de un modelo de Ollama.
+
+El automontaje genera por defecto subtítulos desde `texto_narracion` y la duración
+medida de cada escena. Este modo no necesita Whisper: reparte el tiempo entre
+grupos de palabras, por lo que sirve para subtítulos legibles, no para sincronía
+exacta de cada palabra. Para transcripción de la voz real, configura
+`"subtitulos": {"generar": true, "modo": "transcripcion"}` e instala uno de
+los extras de subtítulos.
+
 > Sistema en Python para **mejorar, editar y montar vídeos automáticamente**.
 > Combina FFmpeg, IA local (Whisper, Demucs, Real-ESRGAN) y un sistema de
 > **contratos de herramientas seguras** controlable por lenguaje natural en español.

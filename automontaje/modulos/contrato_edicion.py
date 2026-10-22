@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .tiempos import MapaTiempos
+from .proceso import ControlProceso, Cancelado, contexto
 
 
 ParametroSpec = dict[str, Any]
@@ -58,6 +59,11 @@ class HerramientaEdicion:
 
 
 def _validar_tipo(nombre: str, valor: Any, tipo: str) -> str | None:
+    if tipo in ("int", "float") and (
+        isinstance(valor, bool) or not isinstance(valor, (int, float))
+        or (isinstance(valor, float) and not math.isfinite(valor))
+    ):
+        return f"'{nombre}' debe ser un numero finito, no booleano."
     if tipo == "bool" and not isinstance(valor, bool):
         return f"'{nombre}' debe ser booleano."
     if tipo == "str" and not isinstance(valor, str):
@@ -524,6 +530,18 @@ def _trasladar_tiempos(
             return None
         nuevos["inicio"], nuevos["fin"] = round(tramo[0], 3), round(tramo[1], 3)
         return nuevos
+    if herramienta.tiempos == ("inicio",) and "duracion" in params:
+        _, inicio_quitado = mapa.llevar(params["inicio"])
+        tramo = mapa.llevar_tramo(params["inicio"], params["inicio"] + params["duracion"])
+        if tramo is None:
+            avisos.append(f"{herramienta.nombre}: el intervalo ya no existe; se omite.")
+            return None
+        nuevos["inicio"] = round(tramo[0], 3)
+        nuevos["duracion"] = round(tramo[1] - tramo[0], 3)
+        if inicio_quitado:
+            avisos.append(f"{herramienta.nombre}: el segundo {_segundos_legibles(params['inicio'])} "
+                          "del original se habia quitado; se usa el siguiente momento que queda.")
+        return nuevos
     for clave in herramienta.tiempos:
         t, quitado = mapa.llevar(params[clave])
         if quitado:
@@ -541,6 +559,23 @@ def ejecutar_contrato_herramientas(
     contrato: dict[str, Any],
     al_progresar: Callable[[float, str], None] | None = None,
     mapa_inicial: MapaTiempos | None = None,
+    control: ControlProceso | None = None,
+) -> dict[str, Any]:
+    """Ejecuta un trabajo aislado; conserva la salida anterior ante error o cancelacion."""
+    try:
+        if os.path.normcase(os.path.realpath(ruta_entrada)) == os.path.normcase(os.path.realpath(ruta_salida)):
+            raise ValueError("La salida debe ser distinta del archivo original.")
+        with contexto(control):
+            return _ejecutar_contrato(ruta_entrada, ruta_salida, contrato, al_progresar,
+                                     mapa_inicial, control)
+    except Cancelado as exc:
+        return {"exito": False, "cancelado": True, "errores": [str(exc)], "avisos": []}
+    except (OSError, ValueError) as exc:
+        return {"exito": False, "errores": [str(exc)], "avisos": []}
+
+
+def _ejecutar_contrato(
+    ruta_entrada, ruta_salida, contrato, al_progresar, mapa_inicial, control,
 ) -> dict[str, Any]:
     """Valida y ejecuta un contrato herramienta por herramienta.
 
@@ -582,6 +617,8 @@ def ejecutar_contrato_herramientas(
     omitidos: list[str] = []
     with tempfile.TemporaryDirectory(prefix="aegs_tools_") as tmpdir:
         for idx, paso in enumerate(pasos, 1):
+            if control:
+                control.comprobar()
             nombre = paso["herramienta"]
             herramienta = REGISTRO_HERRAMIENTAS[nombre]
             params = paso["parametros"]
@@ -591,9 +628,18 @@ def ejecutar_contrato_herramientas(
                     omitidos.append(nombre)
                     continue
             progresar((idx - 1) / len(pasos), f"Paso {idx}/{len(pasos)}: {herramienta.descripcion}")
+            if control:
+                control.indice, control.total = idx - 1, len(pasos)
+                control.texto = herramienta.descripcion
+                from .efectos import _info_video
+                control.duracion = _info_video(actual)[0]
             salida_paso = os.path.join(tmpdir, f"paso_{idx:03d}_{nombre}{ext}")
             try:
                 resultado = herramienta.ejecutar(actual, salida_paso, params)
+                if control:
+                    control.comprobar()
+            except Cancelado:
+                raise
             except Exception as exc:
                 return {
                     "exito": False,
@@ -618,7 +664,18 @@ def ejecutar_contrato_herramientas(
             actual = resultado
             ejecutados.append(nombre)
 
-        shutil.copy2(actual, ruta_salida)
+        # Publicar de una vez, en el mismo volumen que el destino.
+        fd, provisional = tempfile.mkstemp(prefix=".aegs_", suffix=ext,
+                                           dir=os.path.dirname(os.path.abspath(ruta_salida)))
+        os.close(fd)
+        try:
+            shutil.copy2(actual, provisional)
+            if control:
+                control.comprobar()
+            os.replace(provisional, ruta_salida)
+        finally:
+            if os.path.exists(provisional):
+                os.remove(provisional)
 
     progresar(1.0, "Listo")
     return {

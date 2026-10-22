@@ -26,6 +26,7 @@ import os
 import json
 import shutil
 import subprocess
+from .proceso import ejecutar_proceso
 import tempfile
 import importlib.util
 from .utilidades import binario, logger
@@ -68,14 +69,14 @@ ESTILOS_COLOR = {
 def _duracion_video(ruta: str) -> float:
     """Devuelve la duración en segundos de un vídeo."""
     cmd = [binario("ffprobe"), "-v", "quiet", "-print_format", "json", "-show_format", ruta]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = ejecutar_proceso(cmd, capture_output=True, text=True)
     info = json.loads(res.stdout)
     return float(info["format"]["duration"])
 
 
 def _run_ffmpeg(cmd: list, descripcion: str):
     """Ejecuta FFmpeg y lanza excepción si falla."""
-    resultado = subprocess.run(cmd, capture_output=True, text=True)
+    resultado = ejecutar_proceso(cmd, capture_output=True, text=True)
     if resultado.returncode != 0:
         raise RuntimeError(f"FFmpeg falló en '{descripcion}':\n{resultado.stderr[-800:]}")
 
@@ -92,7 +93,7 @@ def _brillo_medio(ruta: str) -> float | None:
         "fps=1,scale=320:-1:force_original_aspect_ratio=decrease,"
         "signalstats,metadata=print:key=lavfi.signalstats.YAVG"
     )
-    res = subprocess.run(
+    res = ejecutar_proceso(
         [binario("ffmpeg"), "-i", ruta, "-vf", filtro, "-frames:v", "8", "-f", "null", "-"],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
     )
@@ -222,7 +223,7 @@ def recortar_silencios(
         shutil.copy2(ruta_entrada, ruta_salida)
         return ruta_salida, todo
 
-    registro = subprocess.run(
+    registro = ejecutar_proceso(
         [binario("ffmpeg"), "-hide_banner", "-nostats", "-i", ruta_entrada,
          "-af", f"silencedetect=noise={umbral_db}dB:d={duracion_min}", "-f", "null", "-"],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"
@@ -483,7 +484,7 @@ def anadir_subtitulos_automaticos(
         "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
         os.path.abspath(ruta_salida)
     ]
-    resultado_ff = subprocess.run(
+    resultado_ff = ejecutar_proceso(
         cmd, cwd=carpeta, capture_output=True, text=True,
         encoding="utf-8", errors="ignore"
     )
@@ -529,7 +530,7 @@ FILTROS_LIMPIAR_VOZ = {
 
 def _tiene_audio(ruta: str) -> bool:
     """Indica si el archivo tiene al menos una pista de audio."""
-    res = subprocess.run(
+    res = ejecutar_proceso(
         [binario("ffprobe"), "-v", "error", "-select_streams", "a",
          "-show_entries", "stream=codec_type", "-of", "csv=p=0", ruta],
         capture_output=True, text=True, encoding="utf-8", errors="ignore"

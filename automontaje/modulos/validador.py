@@ -307,6 +307,8 @@ def inicializar_validador(
         if not isinstance(subtitulos, dict):
             errores.append("El campo 'subtitulos' debe ser un objeto JSON.")
         else:
+            if subtitulos.get("modo", "guion") not in ("guion", "transcripcion"):
+                errores.append("El campo 'subtitulos.modo' debe ser 'guion' o 'transcripcion'.")
             fuente = subtitulos.get("fuente", "Arial")
             tamano = subtitulos.get("tamano", 24)
             if not validar_fuente_subtitulos(fuente):

@@ -28,6 +28,7 @@ import json
 import os
 import shutil
 import subprocess
+from .proceso import ejecutar_proceso
 import sys
 import tempfile
 
@@ -66,7 +67,7 @@ def _comprobar_modelo(ejecutable: str, modelo: str) -> None:
 
 
 def _run(cmd: list, descripcion: str) -> None:
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore")
+    r = ejecutar_proceso(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore")
     if r.returncode != 0:
         detalle = (r.stderr or r.stdout or "").strip()[-700:]
         raise RuntimeError(f"{descripcion} falló:\n{detalle}")
@@ -79,7 +80,7 @@ def _ejecutar_esrgan(carpeta_entrada: str, carpeta_salida: str, modelo: str, esc
 
 
 def _brillo(imagen: str) -> float | None:
-    r = subprocess.run(
+    r = ejecutar_proceso(
         [binario("ffmpeg"), "-i", imagen, "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG",
          "-f", "null", "-"],
         capture_output=True, text=True, encoding="utf-8", errors="ignore",
@@ -94,7 +95,7 @@ def _brillo(imagen: str) -> float | None:
 
 
 def _fps(ruta: str) -> float:
-    r = subprocess.run(
+    r = ejecutar_proceso(
         [binario("ffprobe"), "-v", "quiet", "-print_format", "json", "-show_streams", ruta],
         capture_output=True, text=True, encoding="utf-8", errors="ignore",
     )

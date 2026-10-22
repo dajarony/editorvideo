@@ -36,6 +36,7 @@ class App(ctk.CTk):
 
         self.archivo_seleccionado = None
         self.procesando = False
+        self.control_actual = None
         self.nivel_voz_actual = "media"
 
         self._construir_ui()
@@ -221,6 +222,11 @@ class App(ctk.CTk):
             width=210, height=34,
             fg_color="#555", hover_color="#444"
         ).pack(side="left")
+        ctk.CTkButton(
+            frame_cmd_botones, text="Proponer con modelo local",
+            command=self._interpretar_con_modelo, width=205,
+            fg_color="#555", hover_color="#444",
+        ).pack(side="left", padx=(8, 0))
         self.lbl_plan_comando = ctk.CTkLabel(
             frame_cmd_botones,
             text="",
@@ -290,6 +296,19 @@ class App(ctk.CTk):
         self.barra = ctk.CTkProgressBar(frame_progreso, width=700)
         self.barra.pack(pady=(0, 12))
         self.barra.set(0)
+
+        frame_revision = ctk.CTkFrame(self, fg_color="transparent")
+        frame_revision.pack(pady=(0, 10))
+        ctk.CTkLabel(frame_revision, text="Previsualizar desde el segundo:").pack(side="left")
+        self.segundo_preview = ctk.CTkEntry(frame_revision, width=70)
+        self.segundo_preview.insert(0, "0")
+        self.segundo_preview.pack(side="left", padx=6)
+        self.btn_preview = ctk.CTkButton(frame_revision, text="Comparar antes/después (8 s)",
+                                         command=self._previsualizar)
+        self.btn_preview.pack(side="left", padx=5)
+        self.btn_cancelar = ctk.CTkButton(frame_revision, text="Cancelar", command=self._cancelar,
+                                          state="disabled", fg_color="#8b3333")
+        self.btn_cancelar.pack(side="left", padx=5)
 
         # ── Botones inferiores ───────────────────────────
         self.btn_procesar = ctk.CTkButton(
@@ -363,6 +382,80 @@ class App(ctk.CTk):
         self.lbl_estado.configure(text="Archivo cargado. Elige las mejoras y haz clic en PROCESAR.")
         self.barra.set(0)
 
+    def _config_actual(self):
+        ext = os.path.splitext(self.archivo_seleccionado)[1].lower()
+        tipo = "video" if ext in EXTENSIONES_VIDEO else "imagen"
+        return {
+            "tipo": tipo, "cortar_silencios": self.var_silencios.get(),
+            "color_grading": self.var_color.get(), "estilo_color": self.estilo_color.get(),
+            "audio_fades": self.var_fades.get(), "eliminar_muletillas": self.var_muletillas.get(),
+            "formato_vertical": self.var_vertical.get(), "encuadre_vertical": self.encuadre_vertical.get(),
+            "subtitulos": self.var_subtitulos.get(), "limpiar_voz": self.var_limpiar_voz.get(),
+            "nivel_voz": self.nivel_voz_actual, "mejora_real": self.var_mejora_real.get(),
+            "nivel_mejora": self.nivel_mejora.get(), "esrgan": self.var_esrgan.get(),
+            "modelo_esrgan": self.modelo_esrgan.get(),
+        }
+
+    def _iniciar_trabajo(self):
+        from automontaje.modulos.proceso import ControlProceso
+        self.control_actual = ControlProceso(al_progresar=self._estado)
+        self.procesando = True
+        self.btn_procesar.configure(state="disabled")
+        self.btn_preview.configure(state="disabled")
+        self.btn_cancelar.configure(state="normal")
+        self.barra.set(0)
+
+    def _terminar_trabajo(self):
+        self.procesando = False
+        self.control_actual = None
+        self.after(0, lambda: self.btn_procesar.configure(state="normal", text="PROCESAR"))
+        self.after(0, lambda: self.btn_preview.configure(state="normal"))
+        self.after(0, lambda: self.btn_cancelar.configure(state="disabled"))
+
+    def _cancelar(self):
+        if self.control_actual:
+            self.control_actual.cancelar()
+            self._estado("Cancelando el trabajo…")
+
+    def _previsualizar(self):
+        if self.procesando:
+            return
+        if not self.archivo_seleccionado:
+            messagebox.showwarning("Aviso", "Primero selecciona un vídeo.")
+            return
+        try:
+            desde = float(self.segundo_preview.get())
+            if desde < 0:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("Segundo inválido", "Escribe un segundo igual o mayor que cero.")
+            return
+        self._iniciar_trabajo()
+        threading.Thread(target=self._hilo_preview, args=(self.archivo_seleccionado,
+                        self._config_actual(), desde, self.control_actual), daemon=True).start()
+
+    def _hilo_preview(self, ruta, config, desde, control):
+        try:
+            from automontaje.modulos.servicio_edicion import previsualizar
+            base, _ = os.path.splitext(ruta)
+            salida = self._ruta_salida_unica(base + "_comparacion.mp4")
+            resultado = previsualizar(ruta, salida, config, desde, control=control)
+            if resultado.get("cancelado"):
+                self._estado("Previsualización cancelada", 0)
+            elif not resultado["exito"]:
+                raise RuntimeError("\n".join(resultado.get("errores", [])))
+            else:
+                self._ultimo_archivo = salida
+                self._ultima_salida = os.path.dirname(salida)
+                self._estado("Comparación lista: original a la izquierda, editado a la derecha", 1)
+                self.after(0, lambda: os.startfile(salida))
+        except Exception as exc:
+            mensaje = str(exc)
+            self._estado("Error de previsualización: " + mensaje, 0)
+            self.after(0, lambda mensaje=mensaje: messagebox.showerror("Previsualización", mensaje))
+        finally:
+            self._terminar_trabajo()
+
     def _procesar(self):
         if self.procesando:
             return
@@ -370,26 +463,7 @@ class App(ctk.CTk):
             messagebox.showwarning("Aviso", "Primero selecciona un archivo.")
             return
 
-        ext  = os.path.splitext(self.archivo_seleccionado)[1].lower()
-        tipo = "video" if ext in EXTENSIONES_VIDEO else "imagen"
-
-        config = {
-            "tipo":               tipo,
-            "cortar_silencios":   self.var_silencios.get(),
-            "color_grading":      self.var_color.get(),
-            "estilo_color":       self.estilo_color.get(),
-            "audio_fades":        self.var_fades.get(),
-            "eliminar_muletillas":self.var_muletillas.get(),
-            "formato_vertical":   self.var_vertical.get(),
-            "encuadre_vertical":  self.encuadre_vertical.get(),
-            "subtitulos":         self.var_subtitulos.get(),
-            "limpiar_voz":        self.var_limpiar_voz.get(),
-            "nivel_voz":          getattr(self, "nivel_voz_actual", "media"),
-            "mejora_real":        self.var_mejora_real.get(),
-            "nivel_mejora":       self.nivel_mejora.get(),
-            "esrgan":             self.var_esrgan.get(),
-            "modelo_esrgan":      self.modelo_esrgan.get(),
-        }
+        config = self._config_actual()
 
         # Aviso: ampliar video con IA tarda horas
         if config["tipo"] == "video" and config["esrgan"]:
@@ -405,7 +479,7 @@ class App(ctk.CTk):
             if not seguir:
                 return
 
-        self.procesando = True
+        self._iniciar_trabajo()
         self.btn_procesar.configure(state="disabled", text="Procesando...")
         self.barra.set(0)
 
@@ -472,6 +546,26 @@ class App(ctk.CTk):
         self.lbl_plan_comando.configure(text=texto[:110])
         self._validar_contrato()
 
+    def _interpretar_con_modelo(self):
+        """La propuesta queda visible en el JSON; el botón Ejecutar sigue siendo separado."""
+        orden = self.txt_comando.get("1.0", "end").strip()
+        self.lbl_plan_comando.configure(text="Consultando el modelo local…")
+        def trabajo():
+            try:
+                from automontaje.modulos.modelo_ordenes import interpretar_orden
+                contrato = interpretar_orden(orden)
+                def mostrar():
+                    self.txt_contrato.delete("1.0", "end")
+                    self.txt_contrato.insert("1.0", json.dumps(contrato, ensure_ascii=False, indent=2))
+                    self.lbl_plan_comando.configure(text="Revisa el contrato propuesto y pulsa Ejecutar si estás conforme.")
+                    self._validar_contrato()
+                self.after(0, mostrar)
+            except Exception as exc:
+                mensaje = str(exc)
+                self.after(0, lambda mensaje=mensaje: messagebox.showerror("Modelo local", mensaje))
+                self.after(0, lambda: self.lbl_plan_comando.configure(text="La propuesta no se aplicó."))
+        threading.Thread(target=trabajo, daemon=True).start()
+
     def _leer_contrato_ui(self):
         texto = self.txt_contrato.get("1.0", "end").strip()
         if not texto:
@@ -528,7 +622,7 @@ class App(ctk.CTk):
             messagebox.showerror("Contrato invalido", "\n".join(validacion["errores"][:8]))
             return
 
-        self.procesando = True
+        self._iniciar_trabajo()
         self.btn_procesar.configure(state="disabled")
         self.btn_ejecutar_contrato.configure(state="disabled", text="Ejecutando...")
         self.barra.set(0.08)
@@ -546,7 +640,11 @@ class App(ctk.CTk):
             self._estado("Ejecutando contrato de herramientas...", 0.15)
 
             from automontaje.modulos.contrato_edicion import ejecutar_contrato_herramientas
-            resultado = ejecutar_contrato_herramientas(ruta_entrada, ruta_salida, contrato)
+            resultado = ejecutar_contrato_herramientas(ruta_entrada, ruta_salida, contrato,
+                al_progresar=self._estado, control=self.control_actual)
+            if resultado.get("cancelado"):
+                self._estado("Edición cancelada", 0)
+                return
             if not resultado["exito"]:
                 raise RuntimeError("\n".join(resultado.get("errores", ["Error desconocido"])))
 
@@ -564,15 +662,15 @@ class App(ctk.CTk):
                 f"Video generado:\n{ruta_salida}"
             ))
         except Exception as e:
+            mensaje = str(e)
             self._estado(f"Error contrato: {e}", 0)
-            self.after(0, lambda: self.lbl_contrato.configure(
-                text=f"Error: {str(e)[:120]}",
+            self.after(0, lambda mensaje=mensaje: self.lbl_contrato.configure(
+                text=f"Error: {mensaje[:120]}",
                 text_color="#ff8a80"
             ))
-            self.after(0, lambda: messagebox.showerror("Error contrato", str(e)))
+            self.after(0, lambda mensaje=mensaje: messagebox.showerror("Error contrato", mensaje))
         finally:
-            self.procesando = False
-            self.after(0, lambda: self.btn_procesar.configure(state="normal"))
+            self._terminar_trabajo()
             self.after(0, lambda: self.btn_ejecutar_contrato.configure(
                 state="normal", text="Ejecutar contrato"
             ))
@@ -590,7 +688,11 @@ class App(ctk.CTk):
             resultado = procesar(
                 ruta_entrada, ruta_salida, config,
                 al_progresar=lambda fraccion, texto: self._estado(texto, fraccion),
+                control=self.control_actual,
             )
+            if resultado.get("cancelado"):
+                self._estado("Edición cancelada", 0)
+                return
             if not resultado["exito"]:
                 raise RuntimeError("\n".join(resultado.get("errores", ["Error desconocido"])))
 
@@ -604,14 +706,12 @@ class App(ctk.CTk):
             ))
 
         except Exception as e:
+            mensaje = str(e)
             self._estado(f"Error: {e}", 0)
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            self.after(0, lambda mensaje=mensaje: messagebox.showerror("Error", mensaje))
 
         finally:
-            self.procesando = False
-            self.after(0, lambda: self.btn_procesar.configure(
-                state="normal", text="PROCESAR"
-            ))
+            self._terminar_trabajo()
 
     def _ruta_salida_unica(self, ruta_base):
         """Evita sobrescribir resultados anteriores y reduce confusion de versiones."""

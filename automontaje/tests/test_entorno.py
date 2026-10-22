@@ -171,6 +171,6 @@ class TestWhisperOpcional:
         (salida / "timeline.json").write_text(json.dumps({"escenas": []}), encoding="utf-8")
         (salida / "narracion_duraciones.json").write_text("{}", encoding="utf-8")
         monkeypatch.setitem(sys.modules, "whisper", None)
-        res = subtitulos.procesar_subtitulos(str(tmp_path), {"subtitulos": {"generar": True}, "escenas": []})
+        res = subtitulos.procesar_subtitulos(str(tmp_path), {"subtitulos": {"generar": True, "modo": "transcripcion"}, "escenas": []})
         assert res["exito"] is False
         assert 'pip install "automontaje[subtitulos]"' in res["error"]
