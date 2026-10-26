@@ -9,6 +9,7 @@ Uso:
 import os
 import sys
 import json
+import math
 import threading
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -71,13 +72,14 @@ class App(ctk.CTk):
         )
         self.lbl_archivo.pack(expand=True)
 
-        ctk.CTkButton(
+        self.btn_seleccionar_archivo = ctk.CTkButton(
             self.frame_archivo,
             text="Seleccionar archivo (video o imagen)",
             command=self._seleccionar_archivo,
             width=280, height=36,
             font=ctk.CTkFont(size=13)
-        ).pack(pady=(0, 12))
+        )
+        self.btn_seleccionar_archivo.pack(pady=(0, 12))
 
         # ── Opciones en dos columnas ─────────────────────
         frame_opciones = ctk.CTkFrame(self.contenido, corner_radius=12)
@@ -398,8 +400,9 @@ class App(ctk.CTk):
 
     def _iniciar_trabajo(self):
         from automontaje.modulos.proceso import ControlProceso
-        self.control_actual = ControlProceso(al_progresar=self._estado)
+        self.control_actual = ControlProceso(al_progresar=self._avisar_progreso)
         self.procesando = True
+        self.btn_seleccionar_archivo.configure(state="disabled")
         self.btn_procesar.configure(state="disabled")
         self.btn_preview.configure(state="disabled")
         self.btn_cancelar.configure(state="normal")
@@ -408,6 +411,7 @@ class App(ctk.CTk):
     def _terminar_trabajo(self):
         self.procesando = False
         self.control_actual = None
+        self.after(0, lambda: self.btn_seleccionar_archivo.configure(state="normal"))
         self.after(0, lambda: self.btn_procesar.configure(state="normal", text="PROCESAR"))
         self.after(0, lambda: self.btn_preview.configure(state="normal"))
         self.after(0, lambda: self.btn_cancelar.configure(state="disabled"))
@@ -423,9 +427,12 @@ class App(ctk.CTk):
         if not self.archivo_seleccionado:
             messagebox.showwarning("Aviso", "Primero selecciona un vídeo.")
             return
+        if os.path.splitext(self.archivo_seleccionado)[1].lower() not in EXTENSIONES_VIDEO:
+            messagebox.showwarning("Aviso", "La comparación requiere un vídeo.")
+            return
         try:
             desde = float(self.segundo_preview.get())
-            if desde < 0:
+            if not math.isfinite(desde) or desde < 0:
                 raise ValueError()
         except ValueError:
             messagebox.showerror("Segundo inválido", "Escribe un segundo igual o mayor que cero.")
@@ -641,7 +648,7 @@ class App(ctk.CTk):
 
             from automontaje.modulos.contrato_edicion import ejecutar_contrato_herramientas
             resultado = ejecutar_contrato_herramientas(ruta_entrada, ruta_salida, contrato,
-                al_progresar=self._estado, control=self.control_actual)
+                al_progresar=self._avisar_progreso, control=self.control_actual)
             if resultado.get("cancelado"):
                 self._estado("Edición cancelada", 0)
                 return
@@ -728,6 +735,10 @@ class App(ctk.CTk):
         self.after(0, lambda: self.lbl_estado.configure(text=texto))
         if progreso is not None:
             self.after(0, lambda: self.barra.set(progreso))
+
+    def _avisar_progreso(self, fraccion, texto):
+        """Adapta el orden de los argumentos del motor al estado de la ventana."""
+        self._estado(texto, fraccion)
 
     def _ver_archivo(self):
         """Abre el archivo procesado con el programa predeterminado."""

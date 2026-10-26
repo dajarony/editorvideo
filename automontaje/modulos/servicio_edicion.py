@@ -109,18 +109,22 @@ def previsualizar(ruta_entrada: str, ruta_salida: str, config: dict[str, Any],
     """Comparación lado a lado de un extracto con los tiempos del original."""
     import os
     import tempfile
+    import math
     from .proceso import contexto, ejecutar_proceso, Cancelado
     from .tiempos import MapaTiempos
     from .utilidades import binario
 
     if config.get("tipo", "video") != "video":
         return {"exito": False, "errores": ["La previsualización requiere un vídeo."]}
-    if desde < 0 or duracion <= 0 or duracion > 30:
+    if not math.isfinite(desde) or not math.isfinite(duracion) or desde < 0 or duracion <= 0 or duracion > 30:
         return {"exito": False, "errores": ["Elige un inicio positivo y hasta 30 segundos."]}
     try:
-        with contexto(control), tempfile.TemporaryDirectory(prefix="aegs_preview_") as tmp:
+        carpeta_salida = os.path.dirname(os.path.abspath(ruta_salida))
+        with contexto(control), tempfile.TemporaryDirectory(prefix="aegs_preview_") as tmp, \
+                tempfile.TemporaryDirectory(prefix="aegs_preview_final_", dir=carpeta_salida) as tmp_final:
             original = os.path.join(tmp, "original.mp4")
             editado = os.path.join(tmp, "editado.mp4")
+            provisional = os.path.join(tmp_final, "comparacion.mp4")
             cmd = [binario("ffmpeg"), "-y", "-ss", str(desde), "-i", ruta_entrada,
                    "-t", str(duracion), "-vf", "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2",
                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
@@ -136,12 +140,13 @@ def previsualizar(ruta_entrada: str, ruta_salida: str, config: dict[str, Any],
             cmd = [binario("ffmpeg"), "-y", "-i", original, "-i", editado,
                    "-filter_complex", "[0:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2[a];[1:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2[b];[a][b]hstack=inputs=2[v]",
                    "-map", "[v]", "-map", "1:a?", "-c:v", "libx264", "-preset", "ultrafast",
-                   "-crf", "30", "-c:a", "aac", "-shortest", ruta_salida]
+                   "-crf", "30", "-c:a", "aac", "-shortest", provisional]
             mezcla = ejecutar_proceso(cmd, capture_output=True, text=True)
             if mezcla.returncode:
                 raise RuntimeError((mezcla.stderr or "No se pudo crear la comparación.")[-500:])
+            if control:
+                control.comprobar()
+            os.replace(provisional, ruta_salida)
             return {"exito": True, "archivo": ruta_salida, "avisos": resultado.get("avisos", [])}
     except (RuntimeError, OSError, Cancelado) as exc:
-        if os.path.exists(ruta_salida):
-            os.remove(ruta_salida)
         return {"exito": False, "cancelado": isinstance(exc, Cancelado), "errores": [str(exc)]}

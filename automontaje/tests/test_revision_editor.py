@@ -83,6 +83,23 @@ def test_previsualizacion_compara_dos_lados(tmp_path):
     assert obtener_info_media(str(salida))["resolucion"] == "1280x360"
 
 
+def test_error_de_previsualizacion_conserva_salida_anterior(tmp_path):
+    salida = tmp_path / "comparacion.mp4"
+    salida.write_bytes(b"resultado anterior")
+    resultado = previsualizar(str(tmp_path / "ausente.mp4"), str(salida),
+                             {"tipo": "video", "audio_fades": False})
+    assert not resultado["exito"]
+    assert salida.read_bytes() == b"resultado anterior"
+
+
+@pytest.mark.parametrize("desde", [float("nan"), float("inf"), float("-inf")])
+def test_previsualizacion_rechaza_inicio_no_finito(tmp_path, desde):
+    resultado = previsualizar(str(tmp_path / "ausente.mp4"),
+                             str(tmp_path / "comparacion.mp4"), {"tipo": "video"}, desde)
+    assert not resultado["exito"]
+    assert "inicio positivo" in resultado["errores"][0]
+
+
 def test_modelo_local_solo_propone_contratos_validados(monkeypatch):
     from modulos import modelo_ordenes
     class Respuesta:
