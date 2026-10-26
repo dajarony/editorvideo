@@ -178,9 +178,11 @@ def _construir_filtro_video(escena: dict, resolucion: str, fps: int) -> str:
         raise ValueError(f"Resolucion invalida: {resolucion}")
     fps = normalizar_fps(fps)
     dur = escena["duracion_necesaria"]
-    # Duración estricta: como mucho se repite 1 fotograma (la tolerancia), nunca una congelación.
-    # Sin modo estricto se congela lo que falte, incluida la cola de un fundido cruzado (_duracion_procesada).
-    relleno = 1.0 / fps if "fotogramas" in escena else max(0, dur) + FADE_TRANSICION_SEG
+    # Duración estricta: dos fotogramas de margen compensan que algunos FFmpeg
+    # pierden uno al vaciar la cadena scale/pad/fps. -frames:v limita la salida
+    # a la rejilla prevista, así que un clip aceptado no gana más de un fotograma.
+    # Sin modo estricto se congela lo que falte, incluida la cola de un fundido cruzado.
+    relleno = max(0, dur) + FADE_TRANSICION_SEG
     fade_seg = FADE_TRANSICION_SEG
     trans_in = escena.get("transicion_entrada", "cut")
     trans_out = escena.get("transicion_salida", "cut")
@@ -191,7 +193,8 @@ def _construir_filtro_video(escena: dict, resolucion: str, fps: int) -> str:
         f"pad={res_x_y}:(ow-iw)/2:(oh-ih)/2:color=black",
         f"setsar=1",
         f"fps={fps}",
-        f"tpad=stop_mode=clone:stop_duration={relleno}",
+        ("tpad=stop_mode=clone:stop=2" if "fotogramas" in escena
+         else f"tpad=stop_mode=clone:stop_duration={relleno}"),
     ]
 
     # ── Entrada ──
@@ -324,9 +327,14 @@ def _hay_crossfade_real(timeline: dict) -> bool:
 
 
 def _ensamblar_concat_demuxer(
-    ruta_proyecto: str, archivos_procesados: list
+    ruta_proyecto: str, archivos_procesados: list, *, estricta: bool = False
 ) -> str:
-    """Concatenación rápida con demuxer (sin recodificar vídeo)."""
+    """Concatenación rápida sin recodificar vídeo.
+
+    En modo estricto los fotogramas ya se ajustaron a la rejilla acumulada.
+    ``-shortest`` puede descartar los últimos si el audio termina unos milisegundos
+    antes por redondeos del mezclador o del códec AAC.
+    """
     ruta_temp = os.path.join(ruta_proyecto, CARPETA_TEMP)
     lista_concat = os.path.join(ruta_temp, "concat_list.txt")
 
@@ -348,7 +356,7 @@ def _ensamblar_concat_demuxer(
         "-i", ruta_audio,
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",
-        "-shortest",
+        *([] if estricta else ["-shortest"]),
         ruta_video_final
     ]
 
@@ -412,7 +420,10 @@ def ensamblar_y_sincronizar(
     if _hay_crossfade_real(timeline) and len(archivos_procesados) > 1:
         ruta = _ensamblar_xfade(ruta_proyecto, archivos_procesados, timeline, fps)
     else:
-        ruta = _ensamblar_concat_demuxer(ruta_proyecto, archivos_procesados)
+        ruta = _ensamblar_concat_demuxer(
+            ruta_proyecto, archivos_procesados,
+            estricta=bool(timeline["escenas"] and "fotogramas" in timeline["escenas"][0]),
+        )
 
     info = obtener_info_media(ruta)
     if "error" in info:

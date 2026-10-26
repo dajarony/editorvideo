@@ -357,3 +357,23 @@ class TestTimelineEstricto:
         datos["montaje"]["duracion_estricta"] = False
         timeline = montador_video.calcular_timeline(str(proyecto), datos)
         assert [e["id"] for e in timeline["escenas"]] == ["hola"]  # sin modo estricto: aviso y se omite
+
+    def test_concat_estricto_conserva_todos_los_fotogramas(self, tmp_path, ffmpeg):
+        """Un audio ligeramente más corto no debe recortar la imagen ya medida."""
+        ruta_temp = tmp_path / montador_video.CARPETA_TEMP
+        ruta_temp.mkdir(parents=True)
+        clips = [ruta_temp / "e01.mp4", ruta_temp / "e02.mp4"]
+        for clip in clips:
+            _clip(ffmpeg, clip, 1.0)
+        audio = tmp_path / "output" / "audio_mezclado.wav"
+        subprocess.run([ffmpeg["ffmpeg"], "-v", "error", "-y", "-f", "lavfi",
+                        "-i", "sine=frequency=440:duration=1.9", str(audio)], check=True)
+
+        salida = montador_video._ensamblar_concat_demuxer(
+            str(tmp_path), [str(clip) for clip in clips], estricta=True)
+        datos = json.loads(subprocess.run(
+            [ffmpeg["ffprobe"], "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=nb_frames,duration", "-of", "json", salida],
+            capture_output=True, text=True, check=True).stdout)["streams"][0]
+        assert int(datos["nb_frames"]) == 2 * FPS
+        assert float(datos["duration"]) == pytest.approx(2.0, abs=1 / FPS)
